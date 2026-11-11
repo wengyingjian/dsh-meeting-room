@@ -4242,16 +4242,12 @@ function periodBucketOf(startedAt, unit) {
           return
         }
         setPhase('starting')
-        // Take the frame BEFORE capture begins: the same take-over the header's 会议记录 button
-        // performs (workspace rail in, meeting column open at its widest). It sits here, in the
-        // one place a recording can start, so every trigger lands identically — the panel's own
-        // button, the start page's card, or an agent that asked for the start. The model never
-        // touches the layout, so a truncated or filtered reply cannot leave the panel cramped.
-        try {
-          if (typeof props.focusMeeting === 'function') props.focusMeeting()
-        } catch (failure) {
-          console.warn('meeting-room: could not take over the frame for the meeting', failure)
-        }
+        // No frame take-over here on purpose. Opening the column and putting the recording's
+        // conversation on screen happens once capture is up (the tail of beginCapture), but the
+        // workspace rail stays as the person left it and the column keeps its own width:
+        // collapsing the rail is the header button's 会议专注 layout, not something every
+        // recording should impose. Keeping the rail also keeps the session list, the management
+        // page, and the recording mark in view while the meeting runs.
         try {
           // Read here, not at the top: a start that first waits for the model keeps the flag for
           // the run that actually reaches the host. `auto` stops the host from prompting the
@@ -4287,11 +4283,7 @@ function periodBucketOf(startedAt, unit) {
           return
         }
         setPhase('starting')
-        try {
-          if (typeof props.focusMeeting === 'function') props.focusMeeting()
-        } catch (failure) {
-          console.warn('meeting-room: could not take over the frame for the meeting', failure)
-        }
+        // Resuming is the same start: the column gets the meeting, the frame stays as it is.
         try {
           const created = await post('/resume', { meetingId })
           setStoppedAt(0)
@@ -8262,10 +8254,9 @@ function periodBucketOf(startedAt, unit) {
 
         /**
          * Open the meeting panel without ever closing it. `focus` (the default, used by a
-         * click on the header button, by a recording that starts and by the pending-start
-         * watcher) also collapses the workspace rail and widens the column; the automatic
-         * open that follows a click in the management page passes false, so the person keeps
-         * their rail and their panel width.
+         * click on the header button) also collapses the workspace rail and widens the column;
+         * every automatic open — a recording that starts, the pending-start watcher, the
+         * management page — passes false, so the person keeps their rail and their panel width.
          *
          * Repeating the call is harmless: a column already at its maximum must not record
          * that maximum as the width to restore when the person closes it again.
@@ -8421,7 +8412,9 @@ function periodBucketOf(startedAt, unit) {
           // The panel refuses a request this old; the frame must not move for it either.
           if (Date.now() - stamp > 120_000) return
           try {
-            openMeetingFocus()
+            // Open the column only: a start asked for by the agent is still a start, and a start
+            // no longer reshapes the frame (the rail and the column width are the person's).
+            openMeetingFocus(false)
           } catch (failure) {
             console.warn('meeting-room: the pending start could not open the meeting column', failure)
           }
@@ -8516,21 +8509,6 @@ function periodBucketOf(startedAt, unit) {
                 return true
               } catch (failure) {
                 console.warn('meeting-room: could not focus the meeting tab', failure)
-                return false
-              }
-            },
-            /**
-             * Take the frame for this meeting: the header button's own take-over — workspace
-             * rail in, column open, column at its widest. A recording that starts calls this,
-             * so the layout is identical whoever asked for the start (the panel's button, the
-             * start page's card, or the agent's request).
-             * @returns whether the take-over ran.
-             */
-            focusMeeting: () => {
-              try {
-                return openMeetingFocus()
-              } catch (failure) {
-                console.warn('meeting-room: could not take over the frame for the meeting', failure)
                 return false
               }
             },

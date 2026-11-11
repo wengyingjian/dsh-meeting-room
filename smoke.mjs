@@ -633,8 +633,12 @@ check('面板关掉时点红点也能真的停（不依赖面板）',
 check('确认停止后管理页落在「记录」tab',
   clientSource.includes('const hubTabSeats = new Set()')
   && clientSource.includes("seat('records')"))
-// AC-8：这次不碰作者原有的"会议聚焦"布局——开始录音仍然会把左侧栏收起来。
-check('录音开始时左侧栏仍按原行为收起', clientSource.includes('if (readRailCollapsed() === false) ctx.layout.toggleSidebar()'))
+// 开局不再抢画框（后续决定，推翻原 AC-8）：左栏与栏宽是人的，「会议专注」只留给头部按钮。
+check('开始录音不再收起左侧栏，专注布局只在头部按钮',
+  !clientSource.includes('props.focusMeeting()')
+  && clientSource.includes('openMeetingFocus(false)')
+  && clientSource.includes('function toggleMeetingFocus()')
+  && clientSource.includes('if (readRailCollapsed() === false) ctx.layout.toggleSidebar()'))
 check('停止后管理页在收尾期间自动刷新列表',
   clientSource.includes("recorder.phase !== 'idle'")
   && clientSource.includes('void refresh() }, 2000'))
@@ -894,9 +898,13 @@ check('看守能读到最新的开始请求与所属会话', pendingNow.value.re
 await call('/record', { sessionId: 'session-pending' }, 'POST')
 check('请求被领取后看守不再重复接管界面', (await call('/pending')).value.request === 0)
 // 接管界面的动作只能有一份实现：开始录音的路径调用的就是「会议记录」按钮那套动作。
-check('开始录音前按「会议记录」按钮的动作接管界面', clientSource.includes('props.focusMeeting()')
-  && clientSource.includes('focusMeeting: () => {')
-  && clientSource.includes('return openMeetingFocus()'))
+// 开局不再抢画框：左侧栏与栏宽是人的，只有点头部按钮才进「会议专注」。
+check('开始录音不动布局（只切会话、开会议栏）',
+  clientSource.includes('props.revealConversation(sessionId)')
+  && clientSource.includes('props.focusMeetingPanel()')
+  && !clientSource.includes('props.focusMeeting()')
+  && !clientSource.includes('focusMeeting: () => {')
+  && clientSource.includes('openMeetingFocus(false)'))
 check('面板没挂载时由插件层看守打开会议列', clientSource.includes("get('/pending')")
   && clientSource.includes('watchPendingStart') && clientSource.includes("setInterval(() => { void watchPendingStart() }"))
 check('接管后关闭会还原用户原来的宽度，不会被最大值污染', clientSource.includes('current < viewport * 0.9')
