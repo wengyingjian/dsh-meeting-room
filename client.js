@@ -1429,7 +1429,8 @@ registerProcessor('meeting-capture', MeetingCapture)
 .mr-hover:hover { background: var(--dsw-alias-bg-layer-2); }
 /* The "still recording" mark: a fixed-size red dot, no animation and no glow. It shows
    beside the header's 会议记录 label and at the right edge of the sidebar row; the dot is
-   its own hit area so a click stops the meeting instead of opening the panel behind it. */
+   its own hit area so a click can ask to stop the meeting instead of pressing the control
+   it sits in. */
 .mr-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dsw-alias-state-error-primary); }
 .mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 22px;
   height: 22px; flex: none; cursor: pointer; }
@@ -1789,7 +1790,10 @@ registerProcessor('meeting-capture', MeetingCapture)
     function StopConfirm(props) {
       if (props.open !== true) return null
       const t = props.t
-      return h(Dialog, {
+      // Both marks live inside a shell button (the sidebar row, the header's 会议记录 card), so
+      // every click inside the dialog is kept from pressing that button underneath.
+      const keep = (event) => { event.stopPropagation() }
+      return h('span', { onClick: keep, onMouseDown: keep, onPointerDown: keep }, h(Dialog, {
         title: t('stopMeetingTitle'),
         description: t('stopMeetingBody'),
         onClose: props.onCancel,
@@ -1797,7 +1801,7 @@ registerProcessor('meeting-capture', MeetingCapture)
           h(Btn, { key: 'cancel', type: 'button', style: styles.button, onClick: props.onCancel }, t('cancelEntry')),
           h(Btn, { key: 'stop', type: 'button', style: { ...styles.button, ...styles.buttonDanger }, onClick: props.onConfirm }, t('stopConfirmYes')),
         ],
-      }, [])
+      }, []))
     }
 
     /**
