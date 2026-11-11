@@ -1805,6 +1805,39 @@ registerProcessor('meeting-capture', MeetingCapture)
     }
 
     /**
+     * The recording mark both surfaces share: the dot, its hit area and the confirmation.
+     *
+     * One component, so the sidebar row and the header button cannot drift into different ask
+     * behaviour; placement is the caller's class, because the two sit in different boxes.
+     * @param props - placement class, tooltip copy, translations and the page opener.
+     * @returns the mark, plus the confirmation while it is up.
+     */
+    function RecordingMark(props) {
+      const [asking, setAsking] = React.useState(false)
+      return h(React.Fragment, null, h('span', {
+        className: props.className,
+        role: 'button',
+        title: props.title,
+        onClick: (event) => {
+          // The shell button this mark sits in must not act as well: asking to stop is enough.
+          event.preventDefault()
+          event.stopPropagation()
+          setAsking(true)
+        },
+      }, h('span', { className: 'mr-rec-dot' })), h(StopConfirm, {
+        open: asking,
+        t: props.t,
+        onCancel: () => setAsking(false),
+        // Confirming ends the meeting and goes where its record is, exactly as asked.
+        onConfirm: () => {
+          setAsking(false)
+          askStop()
+          openHubPage()
+        },
+      }))
+    }
+
+    /**
      * Render seconds as m:ss.
      * @param seconds - Offset in seconds.
      * @returns the clock text.
@@ -5877,8 +5910,6 @@ function periodBucketOf(startedAt, unit) {
     function OpenMeetingButton(props) {
       // Same shared recorder as the sidebar glyph: the capture lives outside every panel.
       const recording = useRecorder().active !== null
-      /** The confirmation is the same dialog as the sidebar row's. */
-      const [asking, setAsking] = React.useState(false)
       // The management page cannot open the right column: the shell refuses to address it
       // until a conversation surface is mounted, and that page is holding the main area. This
       // button sits in the conversation's own header, so it is mounted exactly when opening
@@ -5920,28 +5951,13 @@ function periodBucketOf(startedAt, unit) {
         onClick: () => props.open(),
       }, h('span', { style: styles.headerButtonLabel }, [
         h('span', { key: 'label' }, props.t('open')),
-        recording ? h('span', {
+        recording ? h(RecordingMark, {
           key: 'dot',
           className: 'mr-rec-hit',
-          role: 'button',
           title: props.t('stop'),
-          onClick: (event) => {
-            // The button opens the panel: asking to stop must not do both.
-            event.preventDefault()
-            event.stopPropagation()
-            setAsking(true)
-          },
-        }, h('span', { className: 'mr-rec-dot' })) : null,
-      ]), h(StopConfirm, {
-        open: asking,
-        t: props.t,
-        onCancel: () => setAsking(false),
-        onConfirm: () => {
-          setAsking(false)
-          askStop()
-          openHubPage()
-        },
-      }))
+          t: props.t,
+        }) : null,
+      ]))
     }
 
     /**
@@ -5986,8 +6002,6 @@ function periodBucketOf(startedAt, unit) {
       // `active` is the microphone's span: set when capture opens and cleared only by the
       // stop path, so a paused meeting still reads as live (the mic is still held).
       const recording = useRecorder().active !== null
-      /** Whether the confirmation is up; the mark only asks, it never stops by itself. */
-      const [asking, setAsking] = React.useState(false)
       const anchor = React.useRef(null)
       // The row is the shell's button and this component is its icon: borrow the button as a
       // positioning context so the mark can sit at the row's edge instead of inside the glyph.
@@ -6020,28 +6034,8 @@ function periodBucketOf(startedAt, unit) {
         ref: anchor,
         style: { width: size, height: size, display: 'inline-flex', flex: 'none' },
       }, glyph, recording
-        ? h('span', {
-          className: 'mr-rec-hit mr-rec-hit--row',
-          role: 'button',
-          title: t('stop'),
-          onClick: (event) => {
-            // The row opens the management page on click: asking to stop must not do both.
-            event.preventDefault()
-            event.stopPropagation()
-            setAsking(true)
-          },
-        }, h('span', { className: 'mr-rec-dot' }))
-        : null, h(StopConfirm, {
-        open: asking,
-        t,
-        onCancel: () => setAsking(false),
-        // Confirming ends the meeting and goes where its record is, exactly as asked.
-        onConfirm: () => {
-          setAsking(false)
-          askStop()
-          openHubPage()
-        },
-      }))
+        ? h(RecordingMark, { className: 'mr-rec-hit mr-rec-hit--row', title: t('stop'), t })
+        : null)
     }
 
     /** Recognizer geometry, measured against the official preprocessor (design §9.2.3). */
@@ -6727,7 +6721,6 @@ function periodBucketOf(startedAt, unit) {
         return () => { cancelled = true }
       }, [hubTab])
 
-      /** Store the robot webhooks and the DingTalk internal application. */
       /** Ask the host's own folder chooser for the meeting directory. */
       const pickMeetingDir = React.useCallback(async () => {
         setError('')
@@ -6753,6 +6746,7 @@ function periodBucketOf(startedAt, unit) {
         }
       }, [meetingDirDraft, t])
 
+      /** Store the robot webhooks and the DingTalk internal application. */
       const saveSettings = React.useCallback(async () => {
         setError('')
         try {
@@ -8246,20 +8240,28 @@ function periodBucketOf(startedAt, unit) {
          * an already-adopted path is reused instead of creating a second Workspace for it.
          * @returns the Workspace id.
          */
+        /** The Workspace id behind a snapshot row; older snapshots spelled it `id`. */
+        function workspaceIdOf(workspace) {
+          const id = workspace?.workspaceId ?? workspace?.id
+          return typeof id === 'string' ? id : ''
+        }
+
         async function ensureMeetingWorkspace() {
-          const config = await get('/webhooks')
-          const prepared = await post('/meeting-dir/prepare', { path: typeof config.meetingDir === 'string' ? config.meetingDir : '' })
+          // The route falls back to the saved setting, so the path never has to be read twice.
+          const prepared = await post('/meeting-dir/prepare', {})
           const path = typeof prepared.path === 'string' ? prepared.path : ''
           if (path === '') throw new Error(t('startNoWorkspacePath'))
           const workspaces = ctx.get('workspaces')
           const items = workspaces?.list?.getSnapshot?.()?.items ?? []
           const existing = items.find((item) => typeof item?.path === 'string' && item.path === path)
-          if (existing !== undefined) return existing.workspaceId ?? existing.id
+          if (existing !== undefined) {
+            const known = workspaceIdOf(existing)
+            if (known !== '') return known
+          }
           if (typeof workspaces?.create !== 'function') throw new Error(t('startNoWorkspaceApi'))
-          const created = await workspaces.create({ path })
-          const id = created?.workspaceId ?? created?.id
-          if (typeof id !== 'string' || id === '') throw new Error(t('startNoWorkspaceApi'))
-          return id
+          const created = workspaceIdOf(await workspaces.create({ path }))
+          if (created === '') throw new Error(t('startNoWorkspaceApi'))
+          return created
         }
 
         /**

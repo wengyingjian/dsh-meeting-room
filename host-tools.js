@@ -1570,21 +1570,34 @@ export async function readSettings() {
 }
 
 /**
- * Resolve the meeting directory and make sure it exists.
+ * Expand and validate a configured meeting directory, without touching the disk.
  *
- * DSH only adopts an existing directory as a Workspace, so the directory a meeting's
- * conversation lives in is created here — one place, so the settings page and the
- * "start a meeting" button agree on what a usable path is.
+ * The one definition of "a usable meeting folder", shared by saving the setting and by
+ * preparing it, so the two can never disagree about what is acceptable.
  * @param value - The configured path (absolute, or starting with `~/`).
- * @returns the canonical absolute path.
+ * @returns the resolved absolute path.
  */
-export async function prepareMeetingDirectory(value) {
+export function resolveMeetingDir(value) {
   const raw = typeof value === 'string' ? value.trim() : ''
   if (raw === '') throw new Error('会议目录为空')
+  if (raw.length > 400) throw new Error('会议目录太长')
   const expanded = raw === '~' || raw.startsWith('~/') ? join(homedir(), raw.slice(1)) : raw
   if (!isAbsolute(expanded)) throw new Error('会议目录必须是绝对路径（或以 ~/ 开头）')
   const target = resolve(expanded)
   if (target === '/' || target === homedir()) throw new Error('会议目录不能是根目录或用户主目录')
+  return target
+}
+
+/**
+ * Resolve the meeting directory and make sure it exists.
+ *
+ * DSH only adopts an existing directory as a Workspace, so the directory a meeting's
+ * conversation lives in is created here.
+ * @param value - The configured path (absolute, or starting with `~/`).
+ * @returns the canonical absolute path.
+ */
+export async function prepareMeetingDirectory(value) {
+  const target = resolveMeetingDir(value)
   await mkdir(target, { recursive: true })
   const canonical = await realpath(target)
   if (!(await stat(canonical)).isDirectory()) throw new Error('会议目录不是一个文件夹')

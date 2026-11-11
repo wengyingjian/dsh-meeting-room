@@ -152,6 +152,7 @@ import {
   readSpeechState,
   prepareSpeech,
   prepareMeetingDirectory,
+  resolveMeetingDir,
 } from './host-tools.js'
 
 /**
@@ -985,11 +986,16 @@ export function createHandler(ctx) {
       const raw = body.meetingDir.trim()
       if (raw === '') {
         next.meetingDir = ''
-      } else if (raw === '/' || !/^(?:~\/|\/)/u.test(raw) || raw.length > 400) {
-        sendJson(res, 400, { error: '会议目录必须是绝对路径（或以 ~/ 开头），且不能是根目录' })
-        return
       } else {
-        next.meetingDir = raw
+        try {
+          // Stored as the person typed it (`~/…` stays readable), validated by the one rule set
+          // the prepare route uses.
+          resolveMeetingDir(raw)
+          next.meetingDir = raw
+        } catch (failure) {
+          sendJson(res, 400, { error: failure instanceof Error ? failure.message : String(failure) })
+          return
+        }
       }
     }
     const directory = dirname(webhookFile())
