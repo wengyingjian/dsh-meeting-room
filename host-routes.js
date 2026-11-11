@@ -152,7 +152,6 @@ import {
   readSpeechState,
   prepareSpeech,
   prepareMeetingDirectory,
-  resolveMeetingDir,
 } from './host-tools.js'
 
 /**
@@ -990,7 +989,7 @@ export function createHandler(ctx) {
         try {
           // Stored as the person typed it (`~/…` stays readable), validated by the one rule set
           // the prepare route uses.
-          resolveMeetingDir(raw)
+          await prepareMeetingDirectory(raw)
           next.meetingDir = raw
         } catch (failure) {
           sendJson(res, 400, { error: failure instanceof Error ? failure.message : String(failure) })
@@ -1011,15 +1010,13 @@ export function createHandler(ctx) {
         return
       }
 
-      // Make the configured meeting directory exist and hand back its canonical path. DSH
-      // adopts a Workspace only for an existing directory, so this is the one step the client
-      // cannot do itself.
+      // The configured meeting directory, created if needed, as a canonical path. DSH adopts a
+      // Workspace only for an existing directory, so this is the one step the client cannot do
+      // itself. No path comes in the body: the setting is the only source.
       if (method === 'POST' && route === '/meeting-dir/prepare') {
-        const body = JSON.parse((await readBody(req)).toString('utf8'))
         const settings = await readSettings()
-        const asked = typeof body.path === 'string' && body.path.trim() !== '' ? body.path : settings.meetingDir
         try {
-          const prepared = await prepareMeetingDirectory(asked === '' ? DEFAULT_MEETING_DIR : asked)
+          const prepared = await prepareMeetingDirectory(settings.meetingDir === '' ? DEFAULT_MEETING_DIR : settings.meetingDir)
           sendJson(res, 200, { path: prepared })
         } catch (failure) {
           sendJson(res, 400, { error: failure instanceof Error ? failure.message : String(failure) })

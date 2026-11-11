@@ -1832,6 +1832,7 @@ registerProcessor('meeting-capture', MeetingCapture)
         onConfirm: () => {
           setAsking(false)
           askStop()
+          for (const seat of hubTabSeats) seat('records')
           openHubPage()
         },
       }))
@@ -2418,13 +2419,83 @@ function periodBucketOf(startedAt, unit) {
      */
     const stopAsk = { pending: false, handlers: new Set() }
 
-    /** Opens the meeting column; the client half fills this in when it applies. */
-    let showMeetingPanel = () => false
-
     /** Opens the meeting management page; the client half fills this in when it applies. */
     let openHubPage = () => {}
 
-    /** Run the stop path wherever a meeting panel is mounted; open the column when none is. */
+    /** The mounted management page's tab setter, so an outside stop can land on 记录. */
+    const hubTabSeats = new Set()
+
+    /**
+     * Detach and close one capture session.
+     *
+     * Module level because a recording outlives the panel that started it: the stop path and
+     * the no-panel fallback both have to let go of the same audio graph exactly once.
+     * @param active - The capture session to release.
+     */
+    async function releaseCapture(active) {
+      try {
+        clearInterval(active.ticker)
+        active.node.port.onmessage = null
+        active.node.disconnect()
+        active.sink.disconnect()
+        active.source.disconnect()
+        active.stream.getTracks().forEach((track) => track.stop())
+        if (active.url !== '') URL.revokeObjectURL(active.url)
+        await active.audio.close()
+      } catch (failure) {
+        console.warn('meeting-room: release failed', failure)
+      }
+    }
+
+    /**
+     * Finish a recording that has no mounted panel to run the usual stop path.
+     *
+     * The usual path lives in the panel (it drains the cue queue, re-labels and reports
+     * progress). When the person closed the meeting column there is nothing to delegate to, so
+     * the last buffered audio is sent as one cue, the microphone is released and the host
+     * finalizes — better than a stop that silently never happens.
+     */
+    async function stopWithoutPanel() {
+      const active = recorder.active
+      if (active === null || active.stopping === true) return
+      active.stopping = true
+      recorder.phase = 'transcribing'
+      recorder.emit()
+      try {
+        if (active.pending.length > 0) {
+          const merged = new Float32Array(active.pending.reduce((total, part) => total + part.length, 0))
+          let offset = 0
+          for (const part of active.pending) {
+            merged.set(part, offset)
+            offset += part.length
+          }
+          active.pending = []
+          try {
+            await post('/chunk', { meetingId: active.meetingId, pcm: base64(toPcm16(merged, active.audio.sampleRate)) })
+          } catch (failure) {
+            console.warn('meeting-room: the last cue of a panel-less stop was not recognised', failure)
+          }
+        }
+      } finally {
+        recorder.active = null
+        recorder.emit()
+        await releaseCapture(active)
+      }
+      try {
+        await post('/stop', { meetingId: active.meetingId })
+      } catch (failure) {
+        console.warn('meeting-room: the host could not finalize a panel-less stop', failure)
+      } finally {
+        recorder.phase = 'idle'
+        recorder.emit()
+      }
+    }
+
+    /**
+     * Run the panel's stop path where one is mounted; finish it here where none is.
+     *
+     * The panel stays the single owner of draining, re-labelling and progress while it exists.
+     */
     function askStop() {
       // Not recording, or already on its way out: a second click must not run stop twice.
       if (recorder.active === null || recorder.active.stopping === true) return
@@ -2432,10 +2503,7 @@ function periodBucketOf(startedAt, unit) {
         for (const handler of [...stopAsk.handlers]) handler()
         return
       }
-      // Nothing is mounted to run the stop: open the meeting column, and the panel that mounts
-      // consumes `pending` in its own stop-carrying effect.
-      stopAsk.pending = true
-      showMeetingPanel()
+      void stopWithoutPanel()
     }
 
     /**
@@ -4000,18 +4068,7 @@ function periodBucketOf(startedAt, unit) {
         // re-labelling minutes later.
         recorder.active = null
         recorder.emit()
-        try {
-          clearInterval(active.ticker)
-          active.node.port.onmessage = null
-          active.node.disconnect()
-          active.sink.disconnect()
-          active.source.disconnect()
-          active.stream.getTracks().forEach((track) => track.stop())
-          if (active.url !== '') URL.revokeObjectURL(active.url)
-          await active.audio.close()
-        } catch (failure) {
-          console.warn('meeting-room: release failed', failure)
-        }
+        await releaseCapture(active)
       }, [])
 
       // Deliberately no release-on-unmount: the capture belongs to the recorder, not to
@@ -4393,10 +4450,6 @@ function periodBucketOf(startedAt, unit) {
       React.useEffect(() => {
         const handler = () => { void stop() }
         stopAsk.handlers.add(handler)
-        if (stopAsk.pending === true) {
-          stopAsk.pending = false
-          handler()
-        }
         return () => { stopAsk.handlers.delete(handler) }
       }, [stop])
 
@@ -6891,10 +6944,17 @@ function periodBucketOf(startedAt, unit) {
 
       React.useEffect(() => { void refresh() }, [refresh])
 
+      // An outside stop asks this page for the 记录 tab before it is shown.
+      React.useEffect(() => {
+        hubTabSeats.add(setHubTab)
+        return () => { hubTabSeats.delete(setHubTab) }
+      }, [])
+
       // A stop pressed from a recording mark keeps running after this page opens: keep the
       // record list fresh while the meeting finalizes, then read it once more when it settles.
+      // During an actual recording nothing is polled — the list only changes at the end.
       const recorder = useRecorder()
-      const recordsBusy = recorder.active !== null || recorder.phase !== 'idle'
+      const recordsBusy = recorder.active === null && recorder.phase !== 'idle'
       const lastBusy = React.useRef(recordsBusy)
       React.useEffect(() => {
         const settled = lastBusy.current && !recordsBusy
@@ -7414,8 +7474,8 @@ function periodBucketOf(startedAt, unit) {
               key: 'startmeeting',
               type: 'button',
               style: styles.buttonPrimary,
-              disabled: recordsBusy || startBusy,
-              title: recordsBusy ? t('startAlreadyRecording') : t('hubStartMeeting'),
+              disabled: recordsBusy || startBusy || recorder.active !== null,
+              title: recorder.active !== null ? t('startAlreadyRecording') : t('hubStartMeeting'),
               onClick: () => {
                 if (startBusy) return
                 setStartBusy(true)
@@ -7431,7 +7491,7 @@ function periodBucketOf(startedAt, unit) {
                   }
                 })()
               },
-            }, startBusy ? t('hubStarting') : recordsBusy ? t('hubRecording') : t('hubStartMeeting')),
+            }, startBusy ? t('hubStarting') : recorder.active !== null ? t('hubRecording') : t('hubStartMeeting')),
           ]),
         ]),
         h('div', { key: 'tabs', style: styles.tabs }, HUB_TAB_VALUES.map((value) => h(Btn, {
@@ -8212,18 +8272,6 @@ function periodBucketOf(startedAt, unit) {
          * @param focus - whether to take over the frame as well.
          * @returns whether the column accepted the tab.
          */
-        // A stop asked from the sidebar mark with no panel mounted still has to run the panel's
-        // stop path, so open the column first — the same call the header button makes.
-        showMeetingPanel = () => {
-          try {
-            ctx.sidebarRight.openTab(TAB_KIND)
-            return true
-          } catch (failure) {
-            console.warn('meeting-room: could not open the meeting column for a stop', failure)
-            return false
-          }
-        }
-
         // The mark's confirmation sends the person to the record they just ended.
         openHubPage = () => {
           try {
@@ -8272,7 +8320,7 @@ function periodBucketOf(startedAt, unit) {
          * tab retried until the column rebuilds, then the panel consumes `guideBegin`.
          * @param workspaceId - Workspace to open the conversation in ('' inherits the current one).
          */
-        function beginMeetingInWorkspace(workspaceId) {
+        async function beginMeetingInWorkspace(workspaceId) {
           // Already recording: the panel belongs to the running meeting, so just bring its tab
           // forward instead of starting a second conversation.
           if (recorder.active !== null) {
@@ -8281,7 +8329,7 @@ function periodBucketOf(startedAt, unit) {
             } catch (failure) {
               console.warn('meeting-room: the guide could not open the meeting tab', failure)
             }
-            return
+            return ''
           }
           // A fresh conversation for every meeting: its transcript and the Agent's work stay in
           // one session instead of mixing with whatever was open before.
@@ -8289,36 +8337,36 @@ function periodBucketOf(startedAt, unit) {
           guideBegin.opened = false
           // Without this window a request that never reached a session would fire later.
           guideBegin.deadline = Date.now() + 15_000
-          void (async () => {
-            try {
-              if (typeof workspaceId === 'string' && workspaceId !== '') {
-                // The shell's own "new conversation in this workspace" path: it creates the
-                // blank Session, hands us its id, and reveals it in the main panel — the same
-                // call the sidebar's new-session button makes.
-                await ctx.uiWorkspace.openWorkspace(workspaceId, (created) => {
-                  guideBegin.target = typeof created === 'string' ? created : ''
-                })
-              } else {
-                ctx.uiWorkspace.startSession()
+          try {
+            if (typeof workspaceId === 'string' && workspaceId !== '') {
+              // The shell's own "new conversation in this workspace" path: it creates the
+              // blank Session, hands us its id, and reveals it in the main panel — the same
+              // call the sidebar's new-session button makes.
+              await ctx.uiWorkspace.openWorkspace(workspaceId, (created) => {
+                guideBegin.target = typeof created === 'string' ? created : ''
+              })
+            } else {
+              ctx.uiWorkspace.startSession()
+            }
+          } catch (failure) {
+            console.warn('meeting-room: could not open a new conversation', failure)
+            guideBegin.pending = false
+            // The caller asked for a meeting and none will start: say so instead of pretending.
+            return `无法打开会议会话：${failure instanceof Error ? failure.message : String(failure)}`
+          }
+          // The meeting tab belongs to a session, so it can only be opened after the switch.
+          // Retry briefly: the column rebuilds after the main surface changes.
+          for (const delay of [60, 250, 800, 1600, 3000]) {
+            window.setTimeout(() => {
+              if (guideBegin.pending !== true) return
+              try {
+                ctx.sidebarRight.openTab(TAB_KIND)
+              } catch (failure) {
+                console.warn('meeting-room: the guide could not open the meeting tab', failure)
               }
-            } catch (failure) {
-              console.warn('meeting-room: could not open a new conversation', failure)
-              guideBegin.pending = false
-              return
-            }
-            // The meeting tab belongs to a session, so it can only be opened after the switch.
-            // Retry briefly: the column rebuilds after the main surface changes.
-            for (const delay of [60, 250, 800, 1600, 3000]) {
-              window.setTimeout(() => {
-                if (guideBegin.pending !== true) return
-                try {
-                  ctx.sidebarRight.openTab(TAB_KIND)
-                } catch (failure) {
-                  console.warn('meeting-room: the guide could not open the meeting tab', failure)
-                }
-              }, delay)
-            }
-          })()
+            }, delay)
+          }
+          return ''
         }
 
         function openMeetingFocus(focus = true) {
@@ -8511,7 +8559,7 @@ function periodBucketOf(startedAt, unit) {
         // begins the meeting, so the click arms the panel and opens its tab.
         ctx.slots.inject('sidebar.right.tab.guide.entry', () => ctx.slots.register({
           name: 'sidebar.right.tab.guide.entry', key: TAB_ID, locale: NS,
-          inject: () => ({ begin: (workspaceId) => beginMeetingInWorkspace(workspaceId) }),
+          inject: () => ({ begin: (workspaceId) => { void beginMeetingInWorkspace(workspaceId) } }),
         }, GuideStartCard))
         ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
           name: 'conversation.session.header.actions',
@@ -8593,8 +8641,9 @@ function periodBucketOf(startedAt, unit) {
             startMeeting: async () => {
               if (recorder.active !== null) return t('startAlreadyRecording')
               try {
-                beginMeetingInWorkspace(await ensureMeetingWorkspace())
-                return ''
+                // The conversation has to exist before the panel can record into it: a failure
+                // here means no meeting, so the button must not look successful.
+                return await beginMeetingInWorkspace(await ensureMeetingWorkspace())
               } catch (failure) {
                 return failure instanceof Error ? failure.message : String(failure)
               }

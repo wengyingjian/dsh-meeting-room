@@ -1596,12 +1596,27 @@ export function resolveMeetingDir(value) {
  * @param value - The configured path (absolute, or starting with `~/`).
  * @returns the canonical absolute path.
  */
+/** A filesystem failure in words a person can act on. */
+function readableFileError(failure) {
+  const code = typeof failure?.code === 'string' ? failure.code : ''
+  if (code === 'EACCES' || code === 'EPERM') return '没有权限'
+  if (code === 'ENOTDIR') return '路径里有一段不是文件夹'
+  if (code === 'ENAMETOOLONG') return '路径太长'
+  if (code === 'EROFS') return '这个位置是只读的'
+  if (code === 'ENOSPC') return '磁盘空间不足'
+  return failure instanceof Error ? failure.message : String(failure)
+}
+
 export async function prepareMeetingDirectory(value) {
   const target = resolveMeetingDir(value)
-  await mkdir(target, { recursive: true })
-  const canonical = await realpath(target)
-  if (!(await stat(canonical)).isDirectory()) throw new Error('会议目录不是一个文件夹')
-  return canonical
+  try {
+    await mkdir(target, { recursive: true })
+    const canonical = await realpath(target)
+    if (!(await stat(canonical)).isDirectory()) throw new Error('不是一个文件夹')
+    return canonical
+  } catch (failure) {
+    throw new Error(`无法使用会议目录：${readableFileError(failure)}`)
+  }
 }
 
 /**
