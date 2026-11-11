@@ -153,8 +153,24 @@ registerProcessor('meeting-capture', MeetingCapture)
       guideDescription: '立即录音，会议助手自动整理',
       guideOpening: '正在打开会议…',
       open: '会议记录',
+      recording: '录音中',
       start: '开始记录',
       stop: '停止记录',
+      stopMeetingTitle: '停止这场会议？',
+      stopMeetingBody: '确认后结束录音并回到这场会议的会话；剩余收尾会在后台跑完。',
+      stopConfirmYes: '停止会议',
+      hubStartMeeting: '开始会议',
+      hubStarting: '正在准备…',
+      hubRecording: '正在录音',
+      settingsTabMeeting: '会议与目录',
+      meetingDirHint: '新会议的会话都开在这个目录下：目录不存在会自动创建，并把它加为工作区。留空使用默认值 ~/agents/meetings。',
+      meetingDirPlaceholder: '~/agents/meetings',
+      meetingDirPick: '选择目录…',
+      meetingDirSave: '保存',
+      meetingDirSaved: '会议目录已保存',
+      startAlreadyRecording: '正在录音，先停止这场会议',
+      startNoWorkspaceApi: '这个 DSH 版本没有可用的工作区创建能力',
+      startNoWorkspacePath: '会议目录准备失败',
       idle: '未开始',
       starting: '正在启动麦克风…',
       transcribing: '识别中…',
@@ -583,8 +599,24 @@ registerProcessor('meeting-capture', MeetingCapture)
       guideDescription: 'Record now and let the meeting agent organise',
       guideOpening: 'Opening the meeting…',
       open: 'Meeting notes',
+      recording: 'Recording',
       start: 'Start',
       stop: 'Stop',
+      stopMeetingTitle: 'Stop this meeting?',
+      stopMeetingBody: 'Confirming ends the recording and takes you back to this meeting\'s conversation; the rest of the wrap-up keeps running in the background.',
+      stopConfirmYes: 'Stop meeting',
+      hubStartMeeting: 'Start a meeting',
+      hubStarting: 'Preparing…',
+      hubRecording: 'Recording',
+      settingsTabMeeting: 'Meeting & folder',
+      meetingDirHint: 'New meetings open their conversation in this folder: it is created when missing and adopted as a workspace. Empty means the default ~/agents/meetings.',
+      meetingDirPlaceholder: '~/agents/meetings',
+      meetingDirPick: 'Choose folder…',
+      meetingDirSave: 'Save',
+      meetingDirSaved: 'Meeting folder saved',
+      startAlreadyRecording: 'A meeting is recording — stop it first',
+      startNoWorkspaceApi: 'This DSH version cannot create a workspace',
+      startNoWorkspacePath: 'The meeting folder could not be prepared',
       idle: 'Idle',
       starting: 'Starting the microphone…',
       transcribing: 'Transcribing…',
@@ -1044,7 +1076,6 @@ registerProcessor('meeting-capture', MeetingCapture)
       subtitle: { margin: 0, fontSize: '12px', opacity: 0.7, lineHeight: 1.5 },
       row: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
       button: { padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
-      headerButton: { padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' },
       status: { fontSize: '12px', opacity: 0.8 },
       /**
        * The stop progress under the Start/Stop button. The corner toast keeps its own copy;
@@ -1394,6 +1425,27 @@ registerProcessor('meeting-capture', MeetingCapture)
 .mr-ufield.mr-layout-title { flex: 1 1 auto; min-width: 0; }
 .mr-hover { transition: background .12s ease; }
 .mr-hover:hover { background: var(--dsw-alias-bg-layer-2); }
+/* The "still recording" mark: a fixed-size red dot, no animation and no glow. It shows
+   beside the header's 会议记录 label and at the right edge of the sidebar row; the dot is
+   its own hit area so a click can ask to stop the meeting instead of pressing the control
+   it sits in. */
+.mr-rec-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--dsw-alias-state-error-primary);
+  animation: mr-rec-breathe 1.6s ease-in-out infinite; }
+.mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 24px;
+  height: 24px; flex: none; cursor: pointer; }
+/* The conversation-header entry borrows the shell's own header-action metrics (the 智能体团队
+   and 创造模式 entries): 12px label, tertiary colour, 28px tall, 3/7 padding, hover to primary.
+   Same numbers, so it reads as one of them instead of a plugin-shaped button. */
+.mr-header-entry { display: inline-flex; align-items: center; gap: 5px; min-height: 28px;
+  padding: 3px 7px; border: 0; border-radius: 6px; background: none;
+  color: var(--dsw-alias-label-tertiary); font-size: 12px; cursor: pointer; }
+.mr-header-entry:hover, .mr-header-entry:focus-visible { color: var(--dsw-alias-label-primary); }
+/* In the sidebar row the mark hangs at the row's right edge, after the label. The row is the
+   shell's button; MeetingPanelIcon only lends it a positioning context for this. */
+.mr-rec-hit--row { position: absolute; right: 3px; top: 50%; margin-top: -12px; }
+@keyframes mr-rec-breathe { 0%, 100% { opacity: .45; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+/* A dot that pulses forever is motion the person did not ask for. */
+@media (prefers-reduced-motion: reduce) { .mr-rec-dot { animation: none; opacity: 1; } }
 `
     if (typeof document !== 'undefined' && document.getElementById('mr-control-style') === null) {
       const sheet = document.createElement('style')
@@ -1411,7 +1463,6 @@ registerProcessor('meeting-capture', MeetingCapture)
       [styles.menuItem, 'menu'],
       [styles.tab, 'tab'],
       [styles.tabActive, 'tab-active'],
-      [styles.headerButton, 'header'],
     ])
     const FIELD_VARIANT = new Map([
       [styles.inlineInput, 'tight'],
@@ -1466,7 +1517,6 @@ registerProcessor('meeting-capture', MeetingCapture)
       menu: { variant: 'ghost', size: 'md' },
       tab: { variant: 'ghost', size: 'md' },
       'tab-active': { variant: 'ghost', size: 'md' },
-      header: { variant: 'ghost', size: 'md' },
       plain: { variant: 'ghost', size: 'md' },
     }
 
@@ -1736,6 +1786,64 @@ registerProcessor('meeting-capture', MeetingCapture)
           foot,
         ]),
       ])
+    }
+
+    /**
+     * The confirmation both recording marks raise before a meeting ends: one surface, so the
+     * sidebar row and the header button cannot drift into different behaviour.
+     * @param props - open flag, copy and the cancel / confirm callbacks.
+     * @returns the dialog, or nothing while closed.
+     */
+    function StopConfirm(props) {
+      if (props.open !== true) return null
+      const t = props.t
+      // Both marks live inside a shell button (the sidebar row, the header's 会议记录 card), so
+      // every click inside the dialog is kept from pressing that button underneath.
+      const keep = (event) => { event.stopPropagation() }
+      return h('span', { onClick: keep, onMouseDown: keep, onPointerDown: keep }, h(Dialog, {
+        title: t('stopMeetingTitle'),
+        description: t('stopMeetingBody'),
+        onClose: props.onCancel,
+        footer: [
+          h(Btn, { key: 'cancel', type: 'button', style: styles.button, onClick: props.onCancel }, t('cancelEntry')),
+          h(Btn, { key: 'stop', type: 'button', style: { ...styles.button, ...styles.buttonDanger }, onClick: props.onConfirm }, t('stopConfirmYes')),
+        ],
+      }, []))
+    }
+
+    /**
+     * The recording mark both surfaces share: the dot, its hit area and the confirmation.
+     *
+     * One component, so the sidebar row and the header button cannot drift into different ask
+     * behaviour; placement is the caller's class, because the two sit in different boxes.
+     * @param props - placement class, tooltip copy, translations and the page opener.
+     * @returns the mark, plus the confirmation while it is up.
+     */
+    function RecordingMark(props) {
+      const [asking, setAsking] = React.useState(false)
+      return h(React.Fragment, null, h('span', {
+        className: props.className,
+        role: 'button',
+        title: props.title,
+        onClick: (event) => {
+          // The shell button this mark sits in must not act as well: asking to stop is enough.
+          event.preventDefault()
+          event.stopPropagation()
+          setAsking(true)
+        },
+      }, h('span', { className: 'mr-rec-dot' })), h(StopConfirm, {
+        open: asking,
+        t: props.t,
+        onCancel: () => setAsking(false),
+        // Confirming ends the meeting and lands on its conversation, as asked. The stop clears
+        // `recorder.active`, so the session is read first.
+        onConfirm: () => {
+          const sessionId = typeof recorder.active?.sessionId === 'string' ? recorder.active.sessionId : ''
+          setAsking(false)
+          askStop()
+          openRecordingSession(sessionId)
+        },
+      }))
     }
 
     /**
@@ -2179,6 +2287,7 @@ function periodBucketOf(startedAt, unit) {
       ['speaker', 'settingsTabSpeaker'],
       ['weights', 'settingsTabWeights'],
       ['templates', 'settingsTabTemplates'],
+      ['meeting', 'settingsTabMeeting'],
     ]
 
     /** Local model kinds, in the order the 模型 page lists them. */
@@ -2309,6 +2418,104 @@ function periodBucketOf(startedAt, unit) {
      * open hears the event, a panel that mounts afterwards consumes the flag.
      */
     const guideBegin = { pending: false, opened: false, deadline: 0, target: '' }
+
+    /**
+     * A stop asked for from outside the panel — the recording mark in the sidebar row and in
+     * the conversation header. The panel owns the stop path (drain the last cues, re-label,
+     * finalize), so the ask is handed to it instead of duplicated here; an ask with no panel
+     * mounted waits for the next one.
+     */
+    const stopAsk = { pending: false, handlers: new Set() }
+
+    /** Opens the meeting management page; the client half fills this in when it applies. */
+    let openHubPage = () => {}
+
+    /** Shows the conversation a recording belongs to; the client half fills this in. */
+    let openRecordingSession = () => {}
+
+    /** The mounted management page's tab setter, so an outside stop can land on 记录. */
+    const hubTabSeats = new Set()
+
+    /**
+     * Detach and close one capture session.
+     *
+     * Module level because a recording outlives the panel that started it: the stop path and
+     * the no-panel fallback both have to let go of the same audio graph exactly once.
+     * @param active - The capture session to release.
+     */
+    async function releaseCapture(active) {
+      try {
+        clearInterval(active.ticker)
+        active.node.port.onmessage = null
+        active.node.disconnect()
+        active.sink.disconnect()
+        active.source.disconnect()
+        active.stream.getTracks().forEach((track) => track.stop())
+        if (active.url !== '') URL.revokeObjectURL(active.url)
+        await active.audio.close()
+      } catch (failure) {
+        console.warn('meeting-room: release failed', failure)
+      }
+    }
+
+    /**
+     * Finish a recording that has no mounted panel to run the usual stop path.
+     *
+     * The usual path lives in the panel (it drains the cue queue, re-labels and reports
+     * progress). When the person closed the meeting column there is nothing to delegate to, so
+     * the last buffered audio is sent as one cue, the microphone is released and the host
+     * finalizes — better than a stop that silently never happens.
+     */
+    async function stopWithoutPanel() {
+      const active = recorder.active
+      if (active === null || active.stopping === true) return
+      active.stopping = true
+      recorder.phase = 'transcribing'
+      recorder.emit()
+      try {
+        if (active.pending.length > 0) {
+          const merged = new Float32Array(active.pending.reduce((total, part) => total + part.length, 0))
+          let offset = 0
+          for (const part of active.pending) {
+            merged.set(part, offset)
+            offset += part.length
+          }
+          active.pending = []
+          try {
+            await post('/chunk', { meetingId: active.meetingId, pcm: base64(toPcm16(merged, active.audio.sampleRate)) })
+          } catch (failure) {
+            console.warn('meeting-room: the last cue of a panel-less stop was not recognised', failure)
+          }
+        }
+      } finally {
+        recorder.active = null
+        recorder.emit()
+        await releaseCapture(active)
+      }
+      try {
+        await post('/stop', { meetingId: active.meetingId })
+      } catch (failure) {
+        console.warn('meeting-room: the host could not finalize a panel-less stop', failure)
+      } finally {
+        recorder.phase = 'idle'
+        recorder.emit()
+      }
+    }
+
+    /**
+     * Run the panel's stop path where one is mounted; finish it here where none is.
+     *
+     * The panel stays the single owner of draining, re-labelling and progress while it exists.
+     */
+    function askStop() {
+      // Not recording, or already on its way out: a second click must not run stop twice.
+      if (recorder.active === null || recorder.active.stopping === true) return
+      if (stopAsk.handlers.size > 0) {
+        for (const handler of [...stopAsk.handlers]) handler()
+        return
+      }
+      void stopWithoutPanel()
+    }
 
     /**
      * Read the shared recorder inside a component, re-rendering on every change.
@@ -3867,19 +4074,12 @@ function periodBucketOf(startedAt, unit) {
       const release = React.useCallback(async () => {
         const active = recorder.active
         if (active === null) return
+        // The recording mark on the left-sidebar glyph reads `active`, so announce the
+        // release the moment the microphone is let go — not when the stop path finishes
+        // re-labelling minutes later.
         recorder.active = null
-        try {
-          clearInterval(active.ticker)
-          active.node.port.onmessage = null
-          active.node.disconnect()
-          active.sink.disconnect()
-          active.source.disconnect()
-          active.stream.getTracks().forEach((track) => track.stop())
-          if (active.url !== '') URL.revokeObjectURL(active.url)
-          await active.audio.close()
-        } catch (failure) {
-          console.warn('meeting-room: release failed', failure)
-        }
+        recorder.emit()
+        await releaseCapture(active)
       }, [])
 
       // Deliberately no release-on-unmount: the capture belongs to the recorder, not to
@@ -3975,6 +4175,9 @@ function periodBucketOf(startedAt, unit) {
         const priorSeconds = typeof created.seconds === 'number' ? created.seconds : 0
         const active = {
           meetingId: created.meetingId,
+          // Which conversation owns this meeting: the stop sends the person back there, and the
+          // capture may outlive the panel that knew it.
+          sessionId,
           audio, stream, source, node, sink, url,
           pending: [],
           frames: 0,
@@ -4053,16 +4256,11 @@ function periodBucketOf(startedAt, unit) {
           return
         }
         setPhase('starting')
-        // Take the frame BEFORE capture begins: the same take-over the header's 会议记录 button
-        // performs (workspace rail in, meeting column open at its widest). It sits here, in the
-        // one place a recording can start, so every trigger lands identically — the panel's own
-        // button, the start page's card, or an agent that asked for the start. The model never
-        // touches the layout, so a truncated or filtered reply cannot leave the panel cramped.
-        try {
-          if (typeof props.focusMeeting === 'function') props.focusMeeting()
-        } catch (failure) {
-          console.warn('meeting-room: could not take over the frame for the meeting', failure)
-        }
+        // No frame take-over here on purpose. Opening the column and putting the recording's
+        // conversation on screen happens once capture is up (the tail of beginCapture), but the
+        // workspace rail stays as the person left it and both columns keep their own width —
+        // no entry reshapes the frame any more, which keeps the session list, the management
+        // page, and the recording mark in view while the meeting runs.
         try {
           // Read here, not at the top: a start that first waits for the model keeps the flag for
           // the run that actually reaches the host. `auto` stops the host from prompting the
@@ -4098,11 +4296,7 @@ function periodBucketOf(startedAt, unit) {
           return
         }
         setPhase('starting')
-        try {
-          if (typeof props.focusMeeting === 'function') props.focusMeeting()
-        } catch (failure) {
-          console.warn('meeting-room: could not take over the frame for the meeting', failure)
-        }
+        // Resuming is the same start: the column gets the meeting, the frame stays as it is.
         try {
           const created = await post('/resume', { meetingId })
           setStoppedAt(0)
@@ -4254,6 +4448,15 @@ function periodBucketOf(startedAt, unit) {
         }
         setPhase('idle')
       }, [dismissToast, flush, release, t, toast, updateToast])
+
+      // A stop asked for from outside the panel (the recording mark) runs the same path as the
+      // panel's own button: one place drains, re-labels and finalizes. A pending ask covers a
+      // click that landed while no panel was mounted.
+      React.useEffect(() => {
+        const handler = () => { void stop() }
+        stopAsk.handlers.add(handler)
+        return () => { stopAsk.handlers.delete(handler) }
+      }, [stop])
 
       /**
        * Stop in two presses. The Stop and Pause buttons sit side by side, and a click meant for
@@ -5755,10 +5958,41 @@ function periodBucketOf(startedAt, unit) {
 
     /**
      * Open the meeting panel from the session header.
+     *
+     * It also carries the recording mark: starting a meeting collapses the workspace rail on
+     * macOS, so this button is the one place beside the conversation that is on screen for
+     * the whole recording — the cue a person who forgot they were recording will actually see.
      * @param props - Localized copy plus the injected opener.
      * @returns the header button.
      */
     function OpenMeetingButton(props) {
+      // Same shared recorder as the sidebar glyph: the capture lives outside every panel.
+      const recording = useRecorder().active !== null
+      /**
+       * Whether this conversation already holds something worth opening.
+       *
+       * The entry means "open the record this conversation already has", not "start a meeting
+       * here" — a fresh conversation therefore gets no button, and starting one goes through
+       * the management page's 开始会议 (or the agent). The host answers this from the same
+       * emptiness rule the history list uses.
+       */
+      const [hasRecord, setHasRecord] = React.useState(recording)
+      React.useEffect(() => {
+        const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+        if (sessionId === '') return undefined
+        let cancelled = false
+        const read = async () => {
+          try {
+            const value = await get(`/session?sessionId=${encodeURIComponent(sessionId)}`)
+            if (!cancelled) setHasRecord(value.hasContent === true || value.recording === true)
+          } catch {
+            // The host is restarting: keep the last answer instead of flickering away.
+          }
+        }
+        void read()
+        const timer = window.setInterval(() => { void read() }, 2500)
+        return () => { cancelled = true; window.clearInterval(timer) }
+      }, [props.sessionId])
       // The management page cannot open the right column: the shell refuses to address it
       // until a conversation surface is mounted, and that page is holding the main area. This
       // button sits in the conversation's own header, so it is mounted exactly when opening
@@ -5770,8 +6004,7 @@ function periodBucketOf(startedAt, unit) {
             pending.openedByHeader = true
             console.info('meeting-room: header opens the panel for', pending.meetingId)
             try {
-              if (typeof props.openOnly === 'function') props.openOnly()
-              else props.open()
+              props.open()
             } catch (failure) {
               console.warn('meeting-room: the header could not open the meeting panel', failure)
             }
@@ -5784,8 +6017,7 @@ function periodBucketOf(startedAt, unit) {
             if (Date.now() > guideBegin.deadline) { guideBegin.pending = false; return }
             guideBegin.opened = true
             try {
-              if (typeof props.openOnly === 'function') props.openOnly()
-              else props.open()
+              props.open()
             } catch (failure) {
               console.warn('meeting-room: the header could not open the meeting panel', failure)
             }
@@ -5793,12 +6025,19 @@ function periodBucketOf(startedAt, unit) {
         }, 300)
         return () => clearInterval(timer)
       }, [props])
-      return h(Btn, {
+      // Nothing recorded and nothing written: this conversation has no meeting to open yet.
+      if (recording !== true && hasRecord !== true) return null
+      return h('button', {
         type: 'button',
-        style: styles.headerButton,
-        title: props.t('open'),
+        className: 'mr-header-entry',
+        title: recording ? `${props.t('open')} · ${props.t('recording')}` : props.t('open'),
         onClick: () => props.open(),
-      }, props.t('open'))
+      }, props.t('open'), recording ? h(RecordingMark, {
+        key: 'dot',
+        className: 'mr-rec-hit',
+        title: props.t('stop'),
+        t: props.t,
+      }) : null)
     }
 
     /**
@@ -5829,12 +6068,31 @@ function periodBucketOf(startedAt, unit) {
     /**
      * Draw the left-sidebar row glyph. The row's registered component *is* the icon,
      * and the shell renders it as the row's direct icon child.
-     * @param props - Owner-supplied glyph size.
+     *
+     * While a meeting records, the row also carries the recording mark at its right edge,
+     * after the label — not on the glyph — and a click there stops the meeting without
+     * opening the management page behind it. The capture outlives its panel, so the mark
+     * follows the shared recorder rather than a mounted view.
+     * @param props - Owner-supplied glyph size and copy.
      * @returns the icon element.
      */
     function MeetingPanelIcon(props) {
+      const t = typeof props.t === 'function' ? props.t : (key) => key
       const size = typeof props.size === 'number' ? props.size : 18
-      return h('svg', {
+      // `active` is the microphone's span: set when capture opens and cleared only by the
+      // stop path, so a paused meeting still reads as live (the mic is still held).
+      const recording = useRecorder().active !== null
+      const anchor = React.useRef(null)
+      // The row is the shell's button and this component is its icon: borrow the button as a
+      // positioning context so the mark can sit at the row's edge instead of inside the glyph.
+      React.useEffect(() => {
+        const row = anchor.current === null ? null : anchor.current.closest('button')
+        if (row === null) return undefined
+        const prior = row.style.position
+        row.style.position = 'relative'
+        return () => { row.style.position = prior }
+      }, [])
+      const glyph = h('svg', {
         width: size,
         height: size,
         viewBox: '0 0 24 24',
@@ -5850,6 +6108,14 @@ function periodBucketOf(startedAt, unit) {
         h('path', { key: 'pole', d: 'M12 16v4' }),
         h('path', { key: 'lines', d: 'M8 10.5h2.5M13.5 8.5h2.5M8 13h8' }),
       ])
+      // The wrapper keeps the owner's square; the mark is absolutely positioned against the
+      // row, so it takes no layout space inside the glyph box.
+      return h('span', {
+        ref: anchor,
+        style: { width: size, height: size, display: 'inline-flex', flex: 'none' },
+      }, glyph, recording
+        ? h(RecordingMark, { className: 'mr-rec-hit mr-rec-hit--row', title: t('stop'), t })
+        : null)
     }
 
     /** Recognizer geometry, measured against the official preprocessor (design §9.2.3). */
@@ -6443,6 +6709,11 @@ function periodBucketOf(startedAt, unit) {
       const [deptId, setDeptId] = React.useState(0)
       const [directoryBusy, setDirectoryBusy] = React.useState(false)
       const [settingsNote, setSettingsNote] = React.useState('')
+      /** The meeting directory being edited, and the last result of saving it. */
+      const [meetingDirDraft, setMeetingDirDraft] = React.useState('')
+      const [meetingDirNote, setMeetingDirNote] = React.useState('')
+      /** 「开始会议」 is preparing a conversation; the button stays disabled meanwhile. */
+      const [startBusy, setStartBusy] = React.useState(false)
       /** The hidden file field behind the import button, and whether an import is running. */
       const importField = React.useRef(null)
       const [importing, setImporting] = React.useState(false)
@@ -6514,6 +6785,9 @@ function periodBucketOf(startedAt, unit) {
               people: Array.isArray(roster.people) ? roster.people : [],
               departments: Array.isArray(roster.departments) ? roster.departments : [],
             })
+            // The host answers with the value in force, default included, so the field is never
+            // blank and 开始会议 always has a directory to work with.
+            setMeetingDirDraft(typeof config.meetingDir === 'string' ? config.meetingDir : '')
             // The secret never comes back, so only displayable fields are prefilled.
             setSettingsDraft((value) => ({
               ...value,
@@ -6526,6 +6800,31 @@ function periodBucketOf(startedAt, unit) {
         })()
         return () => { cancelled = true }
       }, [hubTab])
+
+      /** Ask the host's own folder chooser for the meeting directory. */
+      const pickMeetingDir = React.useCallback(async () => {
+        setError('')
+        try {
+          const picked = await props.pickDirectory()
+          // Cancelling resolves to null and must leave whatever was typed untouched.
+          if (typeof picked === 'string' && picked !== '') setMeetingDirDraft(picked)
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : String(failure))
+        }
+      }, [props])
+
+      /** Store the meeting directory; the host answers with the value now in force. */
+      const saveMeetingDir = React.useCallback(async () => {
+        setError('')
+        setMeetingDirNote('')
+        try {
+          const reply = await post('/webhooks', { meetingDir: meetingDirDraft })
+          if (typeof reply.meetingDir === 'string') setMeetingDirDraft(reply.meetingDir)
+          setMeetingDirNote(t('meetingDirSaved'))
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : String(failure))
+        }
+      }, [meetingDirDraft, t])
 
       /** Store the robot webhooks and the DingTalk internal application. */
       const saveSettings = React.useCallback(async () => {
@@ -6671,6 +6970,29 @@ function periodBucketOf(startedAt, unit) {
       }, [])
 
       React.useEffect(() => { void refresh() }, [refresh])
+
+      // An outside stop asks this page for the 记录 tab before it is shown.
+      React.useEffect(() => {
+        hubTabSeats.add(setHubTab)
+        return () => { hubTabSeats.delete(setHubTab) }
+      }, [])
+
+      // A stop pressed from a recording mark keeps running after this page opens: keep the
+      // record list fresh while the meeting finalizes, then read it once more when it settles.
+      // During an actual recording nothing is polled — the list only changes at the end.
+      const recorder = useRecorder()
+      const recordsBusy = recorder.active === null && recorder.phase !== 'idle'
+      const lastBusy = React.useRef(recordsBusy)
+      React.useEffect(() => {
+        const settled = lastBusy.current && !recordsBusy
+        lastBusy.current = recordsBusy
+        if (!recordsBusy) {
+          if (settled) void refresh()
+          return undefined
+        }
+        const timer = window.setInterval(() => { void refresh() }, 2000)
+        return () => window.clearInterval(timer)
+      }, [recordsBusy, refresh])
 
       /** Read the cloud summary and seed the fields with it (the key stays blank by design). */
       const loadCloud = React.useCallback(async () => {
@@ -7172,6 +7494,32 @@ function periodBucketOf(startedAt, unit) {
             ? t('hubNoSession')
             : conversationOpen ? t('hubSessionOpen') : t('hubSessionBackground')),
           h('div', { key: 'hint', style: styles.hint }, t('hubHowTo')),
+          // One click starts a meeting where the record belongs: the configured folder's
+          // Workspace, a fresh conversation, the meeting panel open and already recording.
+          h('div', { key: 'startrow', style: { ...styles.row, marginTop: '10px' } }, [
+            h(Btn, {
+              key: 'startmeeting',
+              type: 'button',
+              style: styles.buttonPrimary,
+              disabled: recordsBusy || startBusy || recorder.active !== null,
+              title: recorder.active !== null ? t('startAlreadyRecording') : t('hubStartMeeting'),
+              onClick: () => {
+                if (startBusy) return
+                setStartBusy(true)
+                setError('')
+                void (async () => {
+                  try {
+                    const problem = await props.startMeeting()
+                    if (typeof problem === 'string' && problem !== '') setError(problem)
+                  } catch (failure) {
+                    setError(failure instanceof Error ? failure.message : String(failure))
+                  } finally {
+                    setStartBusy(false)
+                  }
+                })()
+              },
+            }, startBusy ? t('hubStarting') : recorder.active !== null ? t('hubRecording') : t('hubStartMeeting')),
+          ]),
         ]),
         h('div', { key: 'tabs', style: styles.tabs }, HUB_TAB_VALUES.map((value) => h(Btn, {
           key: value,
@@ -7443,6 +7791,25 @@ function periodBucketOf(startedAt, unit) {
             h('div', { key: 'templateactions', style: styles.row }, [
               h(Btn, { key: 'savetemplates', type: 'button', style: styles.button, onClick: () => { void saveTemplates() } }, t('templateSave')),
               templatesNote === '' ? null : h('span', { key: 'note', style: styles.status }, templatesNote),
+            ]),
+            ]),
+            settingsTab !== 'meeting' ? null : h('div', { key: 'settings-meeting', style: styles.list }, [
+            // Where a meeting's conversation lives. The host fills in the default, so the field
+            // is never empty and 开始会议 always has somewhere to go.
+            h('span', { key: 'meetingdirtitle', style: styles.label }, t('settingsTabMeeting')),
+            h('span', { key: 'meetingdirhint', style: styles.hint }, t('meetingDirHint')),
+            h('div', { key: 'meetingdirrow', style: styles.row }, [
+              h(Field, {
+                key: 'meetingdir',
+                style: styles.inlineWide,
+                value: meetingDirDraft,
+                placeholder: t('meetingDirPlaceholder'),
+                spellCheck: false,
+                onChange: (event) => setMeetingDirDraft(event.target.value),
+              }),
+              h(Btn, { key: 'pickdir', type: 'button', style: styles.smallButton, onClick: () => { void pickMeetingDir() } }, t('meetingDirPick')),
+              h(Btn, { key: 'savedir', type: 'button', style: styles.button, onClick: () => { void saveMeetingDir() } }, t('meetingDirSave')),
+              meetingDirNote === '' ? null : h('span', { key: 'meetingdirnote', style: styles.status }, meetingDirNote),
             ]),
             ]),
             settingsTab !== 'speaker' ? null : h('div', { key: 'settings-speaker', style: styles.list }, [
@@ -7880,80 +8247,147 @@ function periodBucketOf(startedAt, unit) {
           return typeof sidebar === 'number' ? sidebar === 0 : null
         }
 
-        /**
-         * Set the right panel's width preference. The layout service exposes no width
-         * setter, so this writes the store's own action, which clamps to the frame's
-         * maximum — the widest the panel can be while the conversation stays visible.
-         * @param px - Requested width in px.
-         */
-        function setRightbarWidth(px) {
+        // The mark's confirmation sends the person to the record they just ended.
+        openHubPage = () => {
           try {
-            layoutStore()?.actions?.setRightbar?.(px)
+            ctx.layout.selectPanel(PANEL_ID)
           } catch (failure) {
-            console.warn('meeting-room: could not set the right panel width', failure)
+            console.warn('meeting-room: could not open the meeting management page', failure)
           }
         }
 
-        /** Panel width to restore when leaving meeting focus; null until the first focus. */
-        let savedRightbar = null
-
         /**
-         * Toggle meeting focus from the session header. Opening: collapse the workspace
-         * rail, open the meeting panel, and widen it to the frame's maximum while the
-         * conversation stays visible. Closing: shut the right panel and give the frame
-         * back to the workspace.
+         * Show the conversation that owns the meeting just stopped.
          *
-         * The decision follows the pane's real state, never a remembered flag: a pane the
-         * user closed by any other route would otherwise leave the memory stale and make every
-         * later click take the opening branch again, collapsing the rail each time.
+         * A meeting belongs to exactly one conversation, so that is where the person comes
+         * back to; the management page stays the fallback when the session is unknown or the
+         * shell refuses the switch.
+         * @param sessionId - the recording's session, '' when unknown.
          */
-        function toggleMeetingFocus() {
-          if (ctx.sidebarRight.isExpanded()) {
-            // Collapse the column first: it is the visible close of the right window.
-            ctx.sidebarRight.toggleExpanded()
-            if (readRailCollapsed() === true) ctx.layout.toggleSidebar()
-            if (savedRightbar !== null) setRightbarWidth(savedRightbar)
-            // The frame is the person's again, so the next take-over saves what it finds then.
-            savedRightbar = null
-            return
+        openRecordingSession = (sessionId) => {
+          if (typeof sessionId === 'string' && sessionId !== '') {
+            try {
+              ctx.uiWorkspace.openSession(sessionId)
+              ctx.layout.selectPanel(null)
+              return
+            } catch (failure) {
+              console.warn('meeting-room: could not reveal the recording conversation', failure)
+            }
           }
-          openMeetingFocus()
+          for (const seat of hubTabSeats) seat('records')
+          openHubPage()
         }
 
         /**
-         * Open the meeting panel without ever closing it. `focus` (the default, used by a
-         * click on the header button, by a recording that starts and by the pending-start
-         * watcher) also collapses the workspace rail and widens the column; the automatic
-         * open that follows a click in the management page passes false, so the person keeps
-         * their rail and their panel width.
+         * Adopt the configured meeting directory as a Workspace and hand back its id.
          *
-         * Repeating the call is harmless: a column already at its maximum must not record
-         * that maximum as the width to restore when the person closes it again.
-         * @param focus - whether to take over the frame as well.
+         * The directory itself is made by the host (DSH only adopts an existing directory), and
+         * an already-adopted path is reused instead of creating a second Workspace for it.
+         * @returns the Workspace id.
+         */
+        /** The Workspace id behind a snapshot row; older snapshots spelled it `id`. */
+        function workspaceIdOf(workspace) {
+          const id = workspace?.workspaceId ?? workspace?.id
+          return typeof id === 'string' ? id : ''
+        }
+
+        async function ensureMeetingWorkspace() {
+          // The route falls back to the saved setting, so the path never has to be read twice.
+          const prepared = await post('/meeting-dir/prepare', {})
+          const path = typeof prepared.path === 'string' ? prepared.path : ''
+          if (path === '') throw new Error(t('startNoWorkspacePath'))
+          const workspaces = ctx.get('workspaces')
+          const items = workspaces?.list?.getSnapshot?.()?.items ?? []
+          const existing = items.find((item) => typeof item?.path === 'string' && item.path === path)
+          if (existing !== undefined) {
+            const known = workspaceIdOf(existing)
+            if (known !== '') return known
+          }
+          if (typeof workspaces?.create !== 'function') throw new Error(t('startNoWorkspaceApi'))
+          const created = workspaceIdOf(await workspaces.create({ path }))
+          if (created === '') throw new Error(t('startNoWorkspaceApi'))
+          return created
+        }
+
+        /**
+         * Open a fresh conversation in a Workspace and let the panel start recording there.
+         *
+         * This is the guide card's hand-off, lifted into one function so the management page's
+         * 「开始会议」 button takes the identical path: a blank Session per meeting, the meeting
+         * tab retried until the column rebuilds, then the panel consumes `guideBegin`.
+         * @param workspaceId - Workspace to open the conversation in ('' inherits the current one).
+         */
+        async function beginMeetingInWorkspace(workspaceId) {
+          // Already recording: the panel belongs to the running meeting, so just bring its tab
+          // forward instead of starting a second conversation.
+          if (recorder.active !== null) {
+            try {
+              ctx.sidebarRight.openTab(TAB_KIND)
+            } catch (failure) {
+              console.warn('meeting-room: the guide could not open the meeting tab', failure)
+            }
+            return ''
+          }
+          // A fresh conversation for every meeting: its transcript and the Agent's work stay in
+          // one session instead of mixing with whatever was open before.
+          guideBegin.pending = true
+          guideBegin.opened = false
+          // Without this window a request that never reached a session would fire later.
+          guideBegin.deadline = Date.now() + 15_000
+          try {
+            if (typeof workspaceId === 'string' && workspaceId !== '') {
+              // The shell's own "new conversation in this workspace" path: it creates the
+              // blank Session, hands us its id, and reveals it in the main panel — the same
+              // call the sidebar's new-session button makes.
+              await ctx.uiWorkspace.openWorkspace(workspaceId, (created) => {
+                guideBegin.target = typeof created === 'string' ? created : ''
+              })
+            } else {
+              ctx.uiWorkspace.startSession()
+            }
+          } catch (failure) {
+            console.warn('meeting-room: could not open a new conversation', failure)
+            guideBegin.pending = false
+            // The caller asked for a meeting and none will start: say so instead of pretending.
+            return `无法打开会议会话：${failure instanceof Error ? failure.message : String(failure)}`
+          }
+          // The meeting tab belongs to a session, so it can only be opened after the switch.
+          // Retry briefly: the column rebuilds after the main surface changes.
+          for (const delay of [60, 250, 800, 1600, 3000]) {
+            window.setTimeout(() => {
+              if (guideBegin.pending !== true) return
+              try {
+                ctx.sidebarRight.openTab(TAB_KIND)
+              } catch (failure) {
+                console.warn('meeting-room: the guide could not open the meeting tab', failure)
+              }
+            }, delay)
+          }
+          return ''
+        }
+
+        /**
+         * Open the meeting panel as an ordinary right-column tab.
+         *
+         * Nothing else moves: the workspace rail and both column widths stay exactly as the
+         * person left them, the same handling the management page's left-sidebar row uses. The
+         * old take-over (rail in, column at its widest) pushed the conversation to its minimum
+         * width and hid the session list and the recording mark, so it is gone from every entry.
          * @returns whether the column accepted the tab.
          */
-        function openMeetingFocus(focus = true) {
-          // Opening expands the column and seeds its default width when it never had one. This
-          // comes first and alone: when the column refuses the tab (no mounted conversation
-          // surface, e.g. the management page is on screen) nothing else may move, or the
-          // person is left with a collapsed workspace and no panel to show for it.
+        function openMeetingColumn() {
           try {
             ctx.sidebarRight.openTab(TAB_KIND)
+            return true
           } catch (failure) {
-            console.warn('meeting-room: the right panel refused the tab', failure)
+            // The shell needs a mounted, adopted session surface; report the real reason
+            // occasionally instead of on every retry.
+            panelOpenFailures += 1
+            if (panelOpenFailures === 1 || panelOpenFailures % 40 === 0) {
+              console.warn('meeting-room: the right panel refused the tab', failure)
+            }
             return false
           }
-          if (focus !== true) return true
-          if (readRailCollapsed() === false) ctx.layout.toggleSidebar()
-          const info = layoutStore()?.getSnapshot?.()?.layoutInfo
-          const viewport = typeof info?.viewportWidth === 'number' ? info.viewportWidth : window.innerWidth
-          const current = typeof info?.rightbar === 'number' ? info.rightbar : 0
-          // Only a width the person chose is worth restoring: one already at (or near) the
-          // maximum is this very take-over, and restoring it later would leave the column
-          // permanently wide.
-          if (savedRightbar === null && current > 0 && current < viewport * 0.9) savedRightbar = current
-          setRightbarWidth(viewport)
-          return true
         }
 
         /**
@@ -7962,10 +8396,10 @@ function periodBucketOf(startedAt, unit) {
          * The panel's own `/record` poll runs inside the panel, so a request made while the
          * column is shut would wait for a panel that never opens — the request looked like a
          * failure even though the host had stored it. Watching the host here closes that gap:
-         * the request itself performs the header button's take-over, the panel mounts, and
-         * the panel's existing poll starts the recording. It also means the model never has
-         * to drive the layout: whether its reply is complete, terse or cut off by the
-         * provider's output filter, the take-over has already happened in code.
+         * the request itself opens the meeting column, the panel mounts, and the panel's own
+         * poll starts the recording. The model never touches the layout either way: whether
+         * its reply is complete, terse or cut off by the provider's output filter, the column
+         * is already open in code.
          */
         let watchedStart = 0
         async function watchPendingStart() {
@@ -7984,7 +8418,9 @@ function periodBucketOf(startedAt, unit) {
           // The panel refuses a request this old; the frame must not move for it either.
           if (Date.now() - stamp > 120_000) return
           try {
-            openMeetingFocus()
+            // Open the column only: a start asked for by the agent is still a start, and a start
+            // no longer reshapes the frame (the rail and the column width are the person's).
+            openMeetingColumn()
           } catch (failure) {
             console.warn('meeting-room: the pending start could not open the meeting column', failure)
           }
@@ -8082,21 +8518,6 @@ function periodBucketOf(startedAt, unit) {
                 return false
               }
             },
-            /**
-             * Take the frame for this meeting: the header button's own take-over — workspace
-             * rail in, column open, column at its widest. A recording that starts calls this,
-             * so the layout is identical whoever asked for the start (the panel's button, the
-             * start page's card, or the agent's request).
-             * @returns whether the take-over ran.
-             */
-            focusMeeting: () => {
-              try {
-                return openMeetingFocus()
-              } catch (failure) {
-                console.warn('meeting-room: could not take over the frame for the meeting', failure)
-                return false
-              }
-            },
             openVoiceInputBundle: () => { if (readRailCollapsed() === true) ctx.layout.toggleSidebar(); const nav = ctx.get('pluginNavigation'); if (nav) nav.openBundle('@deepseek-ai/dsh-experimental-voice-input-bundle'); else ctx.layout.selectPanel('plugins') },
             /**
              * Put a Session's conversation in the main panel. Recording belongs to that
@@ -8122,63 +8543,14 @@ function periodBucketOf(startedAt, unit) {
         // begins the meeting, so the click arms the panel and opens its tab.
         ctx.slots.inject('sidebar.right.tab.guide.entry', () => ctx.slots.register({
           name: 'sidebar.right.tab.guide.entry', key: TAB_ID, locale: NS,
-          inject: () => ({
-            begin: (workspaceId) => {
-              // Already recording: the panel belongs to the running meeting, so just bring
-              // its tab forward instead of starting a second conversation.
-              if (recorder.active !== null) {
-                try {
-                  ctx.sidebarRight.openTab(TAB_KIND)
-                } catch (failure) {
-                  console.warn('meeting-room: the guide could not open the meeting tab', failure)
-                }
-                return
-              }
-              // A fresh conversation for every meeting: its transcript and the Agent's work
-              // stay in one session instead of mixing with whatever was open before.
-              guideBegin.pending = true
-              guideBegin.opened = false
-              // Without this window a request that never reached a session would fire later.
-              guideBegin.deadline = Date.now() + 15_000
-              void (async () => {
-                try {
-                  if (typeof workspaceId === 'string' && workspaceId !== '') {
-                    // The shell's own "new conversation in this workspace" path: it creates
-                    // the blank Session, hands us its id, and reveals it in the main panel —
-                    // the same call the sidebar's new-session button makes.
-                    await ctx.uiWorkspace.openWorkspace(workspaceId, (created) => {
-                      guideBegin.target = typeof created === 'string' ? created : ''
-                    })
-                  } else {
-                    ctx.uiWorkspace.startSession()
-                  }
-                } catch (failure) {
-                  console.warn('meeting-room: the guide could not open a new conversation', failure)
-                  guideBegin.pending = false
-                  return
-                }
-                // The meeting tab belongs to a session, so it can only be opened after the
-                // switch. Retry briefly: the column rebuilds after the main surface changes.
-                for (const delay of [60, 250, 800, 1600, 3000]) {
-                  window.setTimeout(() => {
-                    if (guideBegin.pending !== true) return
-                    try {
-                      ctx.sidebarRight.openTab(TAB_KIND)
-                    } catch (failure) {
-                      console.warn('meeting-room: the guide could not open the meeting tab', failure)
-                    }
-                  }, delay)
-                }
-              })()
-            },
-          }),
+          inject: () => ({ begin: (workspaceId) => { void beginMeetingInWorkspace(workspaceId) } }),
         }, GuideStartCard))
         ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
           name: 'conversation.session.header.actions',
           id: 'meeting-room.open',
           order: 20,
           locale: NS,
-          inject: () => ({ open: () => toggleMeetingFocus(), openOnly: () => openMeetingFocus(false) }),
+          inject: (sessionId) => ({ sessionId, open: () => openMeetingColumn() }),
         }, OpenMeetingButton))
 
         // The left-sidebar row and its main-panel page share one id: the row addresses the page.
@@ -8245,6 +8617,23 @@ function periodBucketOf(startedAt, unit) {
                 return false
               }
             },
+            /**
+             * Start a meeting in the configured directory: make the directory, adopt it as a
+             * Workspace, open a fresh conversation there and let the panel record.
+             * @returns '' when the meeting is on its way, otherwise the reason it is not.
+             */
+            startMeeting: async () => {
+              if (recorder.active !== null) return t('startAlreadyRecording')
+              try {
+                // The conversation has to exist before the panel can record into it: a failure
+                // here means no meeting, so the button must not look successful.
+                return await beginMeetingInWorkspace(await ensureMeetingWorkspace())
+              } catch (failure) {
+                return failure instanceof Error ? failure.message : String(failure)
+              }
+            },
+            /** The host's own directory chooser, used by the meeting-directory field. */
+            pickDirectory: () => ctx.uiWorkspace.pickDirectory(),
           }),
         }, MeetingHubPage))
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({

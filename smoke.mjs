@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url'
 import { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -321,6 +321,43 @@ const longTemplate = await call('/webhooks', { templates: { briefing: 'x'.repeat
 check('过长的模板被截断而不是整段存下', longTemplate.status === 200 && longTemplate.value.templates.briefing.length === 4000)
 await call('/webhooks', { templates: {} }, 'POST')
 
+// 会议目录：设置往返、默认值，以及"保存即采用这个目录"（DSH 只把已存在的目录接受为工作区，
+// 所以目录由宿主在保存时就建出来，坏路径当场报错，而不是拖到第一次开始会议）。
+check('会议目录未设置时回默认值', (await call('/webhooks')).value.meetingDir === '~/agents/meetings')
+// 会话标题栏那颗入口只在"这个会话已经有会议内容"或"正在录"时出现，所以宿主给一个轻量答案。
+const headerMeeting = await call('/ensure', { sessionId: 'session-header-entry' }, 'POST')
+const headerEmpty = await call(`/session?sessionId=session-header-entry`)
+check('新会话的会议没有内容，标题栏入口不显示', headerEmpty.status === 200
+  && headerEmpty.value.hasContent === false && headerEmpty.value.recording === false, JSON.stringify(headerEmpty.value))
+await call('/kind', { meetingId: headerMeeting.value.meetingId, title: '周例会' }, 'POST')
+const headerFilled = await call(`/session?sessionId=session-header-entry`)
+check('有了会议内容后标题栏入口出现', headerFilled.value.hasContent === true && headerFilled.value.recording === false)
+const headerUnknown = await call('/session?sessionId=nobody-here')
+check('不存在的会话回答"没有内容"而不是报错', headerUnknown.status === 200 && headerUnknown.value.hasContent === false)
+
+const badDir = await call('/webhooks', { meetingDir: 'relative/dir' }, 'POST')
+check('相对路径的会议目录被拒', badDir.status === 400 && String(badDir.value.error).includes('绝对路径'))
+const rootDir = await call('/webhooks', { meetingDir: '/' }, 'POST')
+check('根目录不能当会议目录', rootDir.status === 400)
+const meetingDirTarget = resolve(tmp, 'meeting-dir-target')
+const savedDir = await call('/webhooks', { meetingDir: meetingDirTarget }, 'POST')
+check('会议目录可保存并回读', savedDir.status === 200
+  && savedDir.value.meetingDir === meetingDirTarget
+  && (await call('/webhooks')).value.meetingDir === meetingDirTarget)
+check('保存会议目录时就把目录建出来', (await fs.stat(meetingDirTarget).catch(() => null))?.isDirectory() === true)
+const preparedDir = await call('/meeting-dir/prepare', {}, 'POST')
+const preparedCanonical = await fs.realpath(meetingDirTarget).catch(() => '')
+check('prepare 回规范路径（设置是唯一来源）', preparedDir.status === 200 && preparedDir.value.path === preparedCanonical, JSON.stringify(preparedDir.value))
+// 一个文件当父目录，保存时必须给出人能读懂的原因，而不是 errno。
+const blocker = resolve(tmp, 'meeting-dir-blocker')
+await fs.writeFile(blocker, 'x', 'utf8')
+const blockedDir = await call('/webhooks', { meetingDir: resolve(blocker, 'nested') }, 'POST')
+check('建不出来的会议目录被拒且原因可读', blockedDir.status === 400
+  && String(blockedDir.value.error).includes('无法使用会议目录')
+  && String(blockedDir.value.error).includes('不是文件夹'), String(blockedDir.value.error))
+await call('/webhooks', { meetingDir: '' }, 'POST')
+check('清空会议目录回到默认值', (await call('/webhooks')).value.meetingDir === '~/agents/meetings')
+
 // ---------------------------------------------------------------------------
 // 6b. 推送工作安排
 // ---------------------------------------------------------------------------
@@ -560,6 +597,78 @@ check('客户端不再把探测失败当作就绪', !/catch\s*\{\s*return\s*\{\s
 check('客户端初始状态不谎报就绪', !/useState\(\{\s*ready:\s*true/u.test(clientSource))
 check('失败的路由请求带上 HTTP 状态（用来区分 404 与忙）', clientSource.includes('failure.status = response.status'))
 check('准备过程对终态与停滞都有出口（不会空等十分钟）', clientSource.includes('setupPrepareStalled') && clientSource.includes("s.phase === 'missing'"))
+// 左侧栏是「还在录音」唯一天天在视线里的位置：开始录音会把工作区栏收成图标 rail，面板自己
+// 又可以被关掉而采集照跑。所以这条指示读共享 recorder、画在注册的图标组件里面（壳子只渲染
+// 那个 glyph，给不出 badge），并在 release 时立刻清掉。
+check('侧边栏行在录音中显示呼吸红点（行右侧、12px、无光晕）',
+  clientSource.includes('const recording = useRecorder().active !== null')
+  && clientSource.includes("className: 'mr-rec-hit mr-rec-hit--row'")
+  && clientSource.includes('.mr-rec-hit--row { position: absolute; right: 3px')
+  && clientSource.includes('.mr-rec-dot { width: 12px')
+  && clientSource.includes('@keyframes mr-rec-breathe')
+  && clientSource.includes('prefers-reduced-motion: reduce')
+  && !clientSource.includes('box-shadow: 0 0 0 2px'))
+// 开始录音时插件会把左侧栏收起来，所以标题栏那颗常驻的「会议记录」按钮也要带同一个标，
+// 否则忘记录音的人在最需要看见的时候正好看不到。
+check('标题栏的会议记录按钮在录音中显示红点',
+  clientSource.includes("className: 'mr-rec-hit'")
+  && clientSource.includes("props.t('recording')")
+  && clientSource.includes("recording: '录音中'"))
+// 点红点是想停下这场会议，不是想打开管理页：事件就地吃掉，停止交给面板唯一的停止路径。
+check('红点可点击停止录音，且不触发所在按钮',
+  clientSource.includes('function askStop()')
+  && clientSource.includes('stopAsk.handlers.add(handler)')
+  && clientSource.includes("title: t('stop')")
+  && clientSource.includes('function RecordingMark')
+  && clientSource.includes('event.stopPropagation()'))
+check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
+// 点红点只是"想问一下"：确认弹窗、然后停止、然后去会议管理，三步一件不能少。
+// 标题栏那颗入口要跟壳子自己的标题栏动作（智能体团队、创造模式）一个长相：12px、tertiary 色、
+// 28px 高、3/7 padding——不是插件自己的 ghost 按钮。
+check('标题栏入口沿用壳子标题栏动作的字号与颜色',
+  clientSource.includes('.mr-header-entry { display: inline-flex')
+  && clientSource.includes('color: var(--dsw-alias-label-tertiary)')
+  && clientSource.includes('font-size: 12px; cursor: pointer;')
+  && clientSource.includes("className: 'mr-header-entry'"))
+check('会话标题栏的会议记录按钮只在已有会议或录音时出现',
+  clientSource.includes('inject: (sessionId) => ({ sessionId')
+  && clientSource.includes('/session?sessionId=')
+  && clientSource.includes('if (recording !== true && hasRecord !== true) return null'))
+check('点红点先弹确认，确认后才停录并回到这场会议的会话',
+  clientSource.includes('function StopConfirm')
+  && clientSource.includes("t('stopMeetingTitle')")
+  && clientSource.includes('askStop()')
+  && clientSource.includes('openRecordingSession(sessionId)')
+  && clientSource.includes('sessionId,'))
+check('管理页可一键开始会议（目录→工作区→会话→直启）',
+  clientSource.includes("t('hubStartMeeting')")
+  && clientSource.includes('props.startMeeting()')
+  && clientSource.includes('function ensureMeetingWorkspace')
+  && clientSource.includes('await beginMeetingInWorkspace(await ensureMeetingWorkspace())'))
+check('设置页有「会议与目录」tab，目录可手填也可选',
+  clientSource.includes("['meeting', 'settingsTabMeeting']")
+  && clientSource.includes('props.pickDirectory()')
+  && clientSource.includes("post('/webhooks', { meetingDir: meetingDirDraft })"))
+check('面板关掉时点红点也能真的停（不依赖面板）',
+  clientSource.includes('async function stopWithoutPanel')
+  && clientSource.includes('void stopWithoutPanel()')
+  && clientSource.includes('async function releaseCapture'))
+check('停止后回到该会议的会话（拿不到会话才退回管理页记录 tab）',
+  clientSource.includes('openRecordingSession = (sessionId) =>')
+  && clientSource.includes('ctx.uiWorkspace.openSession(sessionId)')
+  && clientSource.includes('const hubTabSeats = new Set()')
+  && clientSource.includes("seat('records')"))
+// 开局与头部按钮都不再抢画框（后续决定，推翻原 AC-8）：左栏、栏宽是人的，会议面板只是普通右栏标签。
+check('打开会议面板的每个入口都不动布局',
+  !clientSource.includes('props.focusMeeting()')
+  && !clientSource.includes('function toggleMeetingFocus()')
+  && !clientSource.includes('savedRightbar')
+  && !clientSource.includes('setRightbarWidth')
+  && !clientSource.includes('if (readRailCollapsed() === false) ctx.layout.toggleSidebar()')
+  && clientSource.includes('function openMeetingColumn()'))
+check('停止后管理页在收尾期间自动刷新列表',
+  clientSource.includes("recorder.phase !== 'idle'")
+  && clientSource.includes('void refresh() }, 2000'))
 // §5.1/§5.2/§5.5 的实际入口：这些名字或调用一旦被改掉，对应功能就会静默消失。
 check('面板标题行含名称、类型与系列导航', clientSource.includes('titlerow') && clientSource.includes('series.prev') && clientSource.includes("saveMeta({ kind"))
 check('四套一键提炼按钮都在', ['distillBriefing', 'distillReview', 'distillWeekly', 'distillMonthly'].every((key) => clientSource.includes(`${key}:`)))
@@ -816,13 +925,20 @@ check('看守能读到最新的开始请求与所属会话', pendingNow.value.re
 await call('/record', { sessionId: 'session-pending' }, 'POST')
 check('请求被领取后看守不再重复接管界面', (await call('/pending')).value.request === 0)
 // 接管界面的动作只能有一份实现：开始录音的路径调用的就是「会议记录」按钮那套动作。
-check('开始录音前按「会议记录」按钮的动作接管界面', clientSource.includes('props.focusMeeting()')
-  && clientSource.includes('focusMeeting: () => {')
-  && clientSource.includes('return openMeetingFocus()'))
+// 开局不再抢画框：左侧栏与栏宽是人的，只有点头部按钮才进「会议专注」。
+check('开始录音不动布局（只切会话、开会议栏）',
+  clientSource.includes('props.revealConversation(sessionId)')
+  && clientSource.includes('props.focusMeetingPanel()')
+  && !clientSource.includes('props.focusMeeting()')
+  && !clientSource.includes('focusMeeting: () => {')
+  && clientSource.includes('openMeetingColumn()'))
 check('面板没挂载时由插件层看守打开会议列', clientSource.includes("get('/pending')")
   && clientSource.includes('watchPendingStart') && clientSource.includes("setInterval(() => { void watchPendingStart() }"))
-check('接管后关闭会还原用户原来的宽度，不会被最大值污染', clientSource.includes('current < viewport * 0.9')
-  && clientSource.includes('savedRightbar = null'))
+// 头部那颗按钮跟左侧「会议管理」一样：只打开右栏的会议标签，不折叠左栏、不改栏宽、不再 toggle。
+check('头部按钮只按当前布局打开会议面板',
+  clientSource.includes('open: () => openMeetingColumn()')
+  && !clientSource.includes('ctx.sidebarRight.toggleExpanded()')
+  && !clientSource.includes('actions?.setRightbar'))
 
 // 人点「开始记录」时，录音之外还要让 agent 自己开工：/start 向该会话投一条普通 prompt。
 const prompted = []

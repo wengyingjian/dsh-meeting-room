@@ -22,6 +22,7 @@ import {
   DOCUMENT_KINDS,
   WEBHOOK_KINDS,
   PUSH_MODES,
+  DEFAULT_MEETING_DIR,
   DEFAULT_CUE_LIMIT,
   MAX_CUE_LIMIT,
   SPEAKER_THRESHOLD,
@@ -150,6 +151,7 @@ import {
   pushToPeople,
   readSpeechState,
   prepareSpeech,
+  prepareMeetingDirectory,
 } from './host-tools.js'
 
 /**
@@ -777,6 +779,24 @@ export function createHandler(ctx) {
         return
       }
 
+      // Whether a conversation already holds something worth opening. The header entry shows
+      // itself from this, and only from this (plus "recording right now"), so a fresh
+      // conversation gets no meeting entry: the answer stays cheap instead of reading a whole
+      // record every few seconds.
+      if (method === 'GET' && route === '/session') {
+        const meeting = meetingForSession(url.searchParams.get('sessionId') ?? '', '')
+        if (meeting === undefined) {
+          sendJson(res, 200, { meetingId: '', hasContent: false, recording: false })
+          return
+        }
+        sendJson(res, 200, {
+          meetingId: meeting.id,
+          hasContent: !meetingIsEmpty(meeting),
+          recording: meeting.audioHandle !== undefined,
+        })
+        return
+      }
+
       if (method === 'POST' && route === '/flush') {
         // The picker's "auto-save": the periodic flush covers it within seconds, but the
         // panel must be able to say "saved" honestly before it switches away.
@@ -931,6 +951,8 @@ export function createHandler(ctx) {
           scoreWeights: settings.scoreWeights,
           // Custom distillation wording per type; an empty entry uses the built-in text.
           templates: settings.templates ?? {},
+          // Where a new meeting's conversation lives; unset means the built-in default.
+          meetingDir: settings.meetingDir === '' ? DEFAULT_MEETING_DIR : settings.meetingDir,
         })
         return
       }
@@ -975,6 +997,24 @@ export function createHandler(ctx) {
       }
       next.templates = kept
     }
+    // The meeting directory: where new meeting conversations live. An empty value clears it
+    // back to the built-in default; anything else must be a path the host can create.
+    if (typeof body.meetingDir === 'string') {
+      const raw = body.meetingDir.trim()
+      if (raw === '') {
+        next.meetingDir = ''
+      } else {
+        try {
+          // Stored as the person typed it (`~/…` stays readable), validated by the one rule set
+          // the prepare route uses.
+          await prepareMeetingDirectory(raw)
+          next.meetingDir = raw
+        } catch (failure) {
+          sendJson(res, 400, { error: failure instanceof Error ? failure.message : String(failure) })
+          return
+        }
+      }
+    }
     const directory = dirname(webhookFile())
         await mkdir(directory, { recursive: true })
         await writeFile(webhookFile(), JSON.stringify(next, null, 2), 'utf8')
@@ -983,7 +1023,22 @@ export function createHandler(ctx) {
           configured: WEBHOOK_KINDS.filter((kind) => next[kind] !== ''),
           scoreWeights: { ...scoreWeights },
           templates: next.templates ?? {},
+          meetingDir: next.meetingDir === '' ? DEFAULT_MEETING_DIR : next.meetingDir,
         })
+        return
+      }
+
+      // The configured meeting directory, created if needed, as a canonical path. DSH adopts a
+      // Workspace only for an existing directory, so this is the one step the client cannot do
+      // itself. No path comes in the body: the setting is the only source.
+      if (method === 'POST' && route === '/meeting-dir/prepare') {
+        const settings = await readSettings()
+        try {
+          const prepared = await prepareMeetingDirectory(settings.meetingDir === '' ? DEFAULT_MEETING_DIR : settings.meetingDir)
+          sendJson(res, 200, { path: prepared })
+        } catch (failure) {
+          sendJson(res, 400, { error: failure instanceof Error ? failure.message : String(failure) })
+        }
         return
       }
 

@@ -9,8 +9,8 @@
  * 制作人：杨道泉 邮箱：yangdaoquan@qq.com
  * Copyright (c) 博尔塔拉融媒体中心媒体传播与认知重点实验室
  */
-import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, writeFile, mkdir, realpath, stat } from 'node:fs/promises'
+import { isAbsolute, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
@@ -1510,6 +1510,8 @@ export function webhookFile() {
 export async function readSettings() {
   const empty = {
     dingtalk: '', wecom: '', appKey: '', appSecret: '', agentId: '', mode: 'group', people: [], departments: [],
+    // Where a new meeting's conversation lives; '' means "the built-in default" (DEFAULT_MEETING_DIR).
+    meetingDir: '',
     // The score weights in force (FEATURES §2.4); the default until a person changes them.
     scoreWeights: { ...scoreWeights },
     // Per-type distillation wording (§9 P4): an empty entry means "use the built-in text".
@@ -1523,6 +1525,7 @@ export async function readSettings() {
     for (const key of ['appKey', 'appSecret', 'agentId']) {
       if (typeof parsed[key] === 'string') empty[key] = parsed[key]
     }
+    if (typeof parsed.meetingDir === 'string') empty.meetingDir = parsed.meetingDir
     if (PUSH_MODES.includes(parsed.mode)) empty.mode = parsed.mode
     // The roster is shared by every meeting: it describes the organisation, not one record.
     if (Array.isArray(parsed.people)) {
@@ -1564,6 +1567,56 @@ export async function readSettings() {
     // Absent or unreadable: nothing is configured yet, which is not an error.
   }
   return empty
+}
+
+/**
+ * Expand and validate a configured meeting directory, without touching the disk.
+ *
+ * The one definition of "a usable meeting folder", shared by saving the setting and by
+ * preparing it, so the two can never disagree about what is acceptable.
+ * @param value - The configured path (absolute, or starting with `~/`).
+ * @returns the resolved absolute path.
+ */
+export function resolveMeetingDir(value) {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (raw === '') throw new Error('会议目录为空')
+  if (raw.length > 400) throw new Error('会议目录太长')
+  const expanded = raw === '~' || raw.startsWith('~/') ? join(homedir(), raw.slice(1)) : raw
+  if (!isAbsolute(expanded)) throw new Error('会议目录必须是绝对路径（或以 ~/ 开头）')
+  const target = resolve(expanded)
+  if (target === '/' || target === homedir()) throw new Error('会议目录不能是根目录或用户主目录')
+  return target
+}
+
+/**
+ * Resolve the meeting directory and make sure it exists.
+ *
+ * DSH only adopts an existing directory as a Workspace, so the directory a meeting's
+ * conversation lives in is created here.
+ * @param value - The configured path (absolute, or starting with `~/`).
+ * @returns the canonical absolute path.
+ */
+/** A filesystem failure in words a person can act on. */
+function readableFileError(failure) {
+  const code = typeof failure?.code === 'string' ? failure.code : ''
+  if (code === 'EACCES' || code === 'EPERM') return '没有权限'
+  if (code === 'ENOTDIR') return '路径里有一段不是文件夹'
+  if (code === 'ENAMETOOLONG') return '路径太长'
+  if (code === 'EROFS') return '这个位置是只读的'
+  if (code === 'ENOSPC') return '磁盘空间不足'
+  return failure instanceof Error ? failure.message : String(failure)
+}
+
+export async function prepareMeetingDirectory(value) {
+  const target = resolveMeetingDir(value)
+  try {
+    await mkdir(target, { recursive: true })
+    const canonical = await realpath(target)
+    if (!(await stat(canonical)).isDirectory()) throw new Error('不是一个文件夹')
+    return canonical
+  } catch (failure) {
+    throw new Error(`无法使用会议目录：${readableFileError(failure)}`)
+  }
 }
 
 /**
