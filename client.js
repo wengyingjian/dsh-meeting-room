@@ -157,7 +157,7 @@ registerProcessor('meeting-capture', MeetingCapture)
       start: '开始记录',
       stop: '停止记录',
       stopMeetingTitle: '停止这场会议？',
-      stopMeetingBody: '确认后停止录音并打开「会议管理」；剩余收尾会在后台跑完，列表自动刷新。',
+      stopMeetingBody: '确认后结束录音并回到这场会议的会话；剩余收尾会在后台跑完。',
       stopConfirmYes: '停止会议',
       hubStartMeeting: '开始会议',
       hubStarting: '正在准备…',
@@ -603,7 +603,7 @@ registerProcessor('meeting-capture', MeetingCapture)
       start: 'Start',
       stop: 'Stop',
       stopMeetingTitle: 'Stop this meeting?',
-      stopMeetingBody: 'Stopping opens Meeting management; the remaining wrap-up keeps running in the background and the list refreshes itself.',
+      stopMeetingBody: 'Confirming ends the recording and takes you back to this meeting\'s conversation; the rest of the wrap-up keeps running in the background.',
       stopConfirmYes: 'Stop meeting',
       hubStartMeeting: 'Start a meeting',
       hubStarting: 'Preparing…',
@@ -1431,12 +1431,16 @@ registerProcessor('meeting-capture', MeetingCapture)
    beside the header's 会议记录 label and at the right edge of the sidebar row; the dot is
    its own hit area so a click can ask to stop the meeting instead of pressing the control
    it sits in. */
-.mr-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dsw-alias-state-error-primary); }
-.mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 22px;
-  height: 22px; flex: none; cursor: pointer; }
+.mr-rec-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--dsw-alias-state-error-primary);
+  animation: mr-rec-breathe 1.6s ease-in-out infinite; }
+.mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 24px;
+  height: 24px; flex: none; cursor: pointer; }
 /* In the sidebar row the mark hangs at the row's right edge, after the label. The row is the
    shell's button; MeetingPanelIcon only lends it a positioning context for this. */
-.mr-rec-hit--row { position: absolute; right: 4px; top: 50%; margin-top: -11px; }
+.mr-rec-hit--row { position: absolute; right: 3px; top: 50%; margin-top: -12px; }
+@keyframes mr-rec-breathe { 0%, 100% { opacity: .45; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+/* A dot that pulses forever is motion the person did not ask for. */
+@media (prefers-reduced-motion: reduce) { .mr-rec-dot { animation: none; opacity: 1; } }
 `
     if (typeof document !== 'undefined' && document.getElementById('mr-control-style') === null) {
       const sheet = document.createElement('style')
@@ -1828,12 +1832,13 @@ registerProcessor('meeting-capture', MeetingCapture)
         open: asking,
         t: props.t,
         onCancel: () => setAsking(false),
-        // Confirming ends the meeting and goes where its record is, exactly as asked.
+        // Confirming ends the meeting and lands on its conversation, as asked. The stop clears
+        // `recorder.active`, so the session is read first.
         onConfirm: () => {
+          const sessionId = typeof recorder.active?.sessionId === 'string' ? recorder.active.sessionId : ''
           setAsking(false)
           askStop()
-          for (const seat of hubTabSeats) seat('records')
-          openHubPage()
+          openRecordingSession(sessionId)
         },
       }))
     }
@@ -2421,6 +2426,9 @@ function periodBucketOf(startedAt, unit) {
 
     /** Opens the meeting management page; the client half fills this in when it applies. */
     let openHubPage = () => {}
+
+    /** Shows the conversation a recording belongs to; the client half fills this in. */
+    let openRecordingSession = () => {}
 
     /** The mounted management page's tab setter, so an outside stop can land on 记录. */
     const hubTabSeats = new Set()
@@ -4164,6 +4172,9 @@ function periodBucketOf(startedAt, unit) {
         const priorSeconds = typeof created.seconds === 'number' ? created.seconds : 0
         const active = {
           meetingId: created.meetingId,
+          // Which conversation owns this meeting: the stop sends the person back there, and the
+          // capture may outlive the panel that knew it.
+          sessionId,
           audio, stream, source, node, sink, url,
           pending: [],
           frames: 0,
@@ -8270,6 +8281,28 @@ function periodBucketOf(startedAt, unit) {
           } catch (failure) {
             console.warn('meeting-room: could not open the meeting management page', failure)
           }
+        }
+
+        /**
+         * Show the conversation that owns the meeting just stopped.
+         *
+         * A meeting belongs to exactly one conversation, so that is where the person comes
+         * back to; the management page stays the fallback when the session is unknown or the
+         * shell refuses the switch.
+         * @param sessionId - the recording's session, '' when unknown.
+         */
+        openRecordingSession = (sessionId) => {
+          if (typeof sessionId === 'string' && sessionId !== '') {
+            try {
+              ctx.uiWorkspace.openSession(sessionId)
+              ctx.layout.selectPanel(null)
+              return
+            } catch (failure) {
+              console.warn('meeting-room: could not reveal the recording conversation', failure)
+            }
+          }
+          for (const seat of hubTabSeats) seat('records')
+          openHubPage()
         }
 
         /**

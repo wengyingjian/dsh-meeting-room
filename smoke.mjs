@@ -589,13 +589,13 @@ check('准备过程对终态与停滞都有出口（不会空等十分钟）', c
 // 左侧栏是「还在录音」唯一天天在视线里的位置：开始录音会把工作区栏收成图标 rail，面板自己
 // 又可以被关掉而采集照跑。所以这条指示读共享 recorder、画在注册的图标组件里面（壳子只渲染
 // 那个 glyph，给不出 badge），并在 release 时立刻清掉。
-check('侧边栏行在录音中显示固定红点（行右侧、不呼吸、不发光）',
+check('侧边栏行在录音中显示呼吸红点（行右侧、12px、无光晕）',
   clientSource.includes('const recording = useRecorder().active !== null')
   && clientSource.includes("className: 'mr-rec-hit mr-rec-hit--row'")
-  && clientSource.includes('.mr-rec-hit--row { position: absolute; right: 4px')
-  && clientSource.includes('.mr-rec-dot { width: 10px')
-  && !clientSource.includes('@keyframes mr-rec-breathe')
-  && !clientSource.includes('animation: mr-rec-breathe')
+  && clientSource.includes('.mr-rec-hit--row { position: absolute; right: 3px')
+  && clientSource.includes('.mr-rec-dot { width: 12px')
+  && clientSource.includes('@keyframes mr-rec-breathe')
+  && clientSource.includes('prefers-reduced-motion: reduce')
   && !clientSource.includes('box-shadow: 0 0 0 2px'))
 // 开始录音时插件会把左侧栏收起来，所以标题栏那颗常驻的「会议记录」按钮也要带同一个标，
 // 否则忘记录音的人在最需要看见的时候正好看不到。
@@ -612,11 +612,12 @@ check('红点可点击停止录音，且不触发所在按钮',
   && clientSource.includes('event.stopPropagation()'))
 check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
 // 点红点只是"想问一下"：确认弹窗、然后停止、然后去会议管理，三步一件不能少。
-check('点红点先弹确认，确认后才停录并打开会议管理',
+check('点红点先弹确认，确认后才停录并回到这场会议的会话',
   clientSource.includes('function StopConfirm')
   && clientSource.includes("t('stopMeetingTitle')")
   && clientSource.includes('askStop()')
-  && clientSource.includes('openHubPage()'))
+  && clientSource.includes('openRecordingSession(sessionId)')
+  && clientSource.includes('sessionId,'))
 check('管理页可一键开始会议（目录→工作区→会话→直启）',
   clientSource.includes("t('hubStartMeeting')")
   && clientSource.includes('props.startMeeting()')
@@ -630,8 +631,10 @@ check('面板关掉时点红点也能真的停（不依赖面板）',
   clientSource.includes('async function stopWithoutPanel')
   && clientSource.includes('void stopWithoutPanel()')
   && clientSource.includes('async function releaseCapture'))
-check('确认停止后管理页落在「记录」tab',
-  clientSource.includes('const hubTabSeats = new Set()')
+check('停止后回到该会议的会话（拿不到会话才退回管理页记录 tab）',
+  clientSource.includes('openRecordingSession = (sessionId) =>')
+  && clientSource.includes('ctx.uiWorkspace.openSession(sessionId)')
+  && clientSource.includes('const hubTabSeats = new Set()')
   && clientSource.includes("seat('records')"))
 // 开局不再抢画框（后续决定，推翻原 AC-8）：左栏与栏宽是人的，「会议专注」只留给头部按钮。
 check('开始录音不再收起左侧栏，专注布局只在头部按钮',
