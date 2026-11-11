@@ -633,6 +633,8 @@ check('面板关掉时点红点也能真的停（不依赖面板）',
 check('确认停止后管理页落在「记录」tab',
   clientSource.includes('const hubTabSeats = new Set()')
   && clientSource.includes("seat('records')"))
+// AC-8：这次不碰作者原有的"会议聚焦"布局——开始录音仍然会把左侧栏收起来。
+check('录音开始时左侧栏仍按原行为收起', clientSource.includes('if (readRailCollapsed() === false) ctx.layout.toggleSidebar()'))
 check('停止后管理页在收尾期间自动刷新列表',
   clientSource.includes("recorder.phase !== 'idle'")
   && clientSource.includes('void refresh() }, 2000'))
