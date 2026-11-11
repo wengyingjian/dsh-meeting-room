@@ -153,6 +153,7 @@ registerProcessor('meeting-capture', MeetingCapture)
       guideDescription: '立即录音，会议助手自动整理',
       guideOpening: '正在打开会议…',
       open: '会议记录',
+      recording: '录音中',
       start: '开始记录',
       stop: '停止记录',
       idle: '未开始',
@@ -583,6 +584,7 @@ registerProcessor('meeting-capture', MeetingCapture)
       guideDescription: 'Record now and let the meeting agent organise',
       guideOpening: 'Opening the meeting…',
       open: 'Meeting notes',
+      recording: 'Recording',
       start: 'Start',
       stop: 'Stop',
       idle: 'Idle',
@@ -1045,6 +1047,7 @@ registerProcessor('meeting-capture', MeetingCapture)
       row: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
       button: { padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
       headerButton: { padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' },
+      headerButtonLabel: { display: 'inline-flex', alignItems: 'center', gap: '6px' },
       status: { fontSize: '12px', opacity: 0.8 },
       /**
        * The stop progress under the Start/Stop button. The corner toast keeps its own copy;
@@ -1394,13 +1397,16 @@ registerProcessor('meeting-capture', MeetingCapture)
 .mr-ufield.mr-layout-title { flex: 1 1 auto; min-width: 0; }
 .mr-hover { transition: background .12s ease; }
 .mr-hover:hover { background: var(--dsw-alias-bg-layer-2); }
-/* The left-sidebar glyph's "still recording" mark: a breathing red dot. It has to live
-   inside the glyph, because the shell renders the registered component as the row's icon
-   and nothing else (see MeetingPanelIcon). */
-.mr-rec-dot { position: absolute; top: -1px; right: -1px; width: 6px; height: 6px;
-  border-radius: 50%; background: var(--dsw-alias-state-error-primary); pointer-events: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent);
+/* The "still recording" mark: a breathing red dot. The capture outlives its panel and the
+   sidebar hides itself during the meeting take-over, so this mark appears both on the
+   left-sidebar glyph and beside the header's 会议记录 button — the one control that stays
+   on screen for as long as the conversation does. */
+.mr-rec-dot { width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--dsw-alias-state-error-primary);
   animation: mr-rec-breathe 1.6s ease-in-out infinite; }
+/* Inside a glyph the dot has to hang off the icon's corner instead of taking layout space. */
+.mr-rec-dot--corner { position: absolute; top: -1px; right: -1px; pointer-events: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent); }
 @keyframes mr-rec-breathe { 0%, 100% { opacity: .35; transform: scale(.7); } 50% { opacity: 1; transform: scale(1); } }
 /* A dot that pulses forever is motion the person did not ask for. */
 @media (prefers-reduced-motion: reduce) { .mr-rec-dot { animation: none; opacity: 1; } }
@@ -5769,10 +5775,16 @@ function periodBucketOf(startedAt, unit) {
 
     /**
      * Open the meeting panel from the session header.
+     *
+     * It also carries the recording mark: starting a meeting collapses the workspace rail on
+     * macOS, so this button is the one place beside the conversation that is on screen for
+     * the whole recording — the cue a person who forgot they were recording will actually see.
      * @param props - Localized copy plus the injected opener.
      * @returns the header button.
      */
     function OpenMeetingButton(props) {
+      // Same shared recorder as the sidebar glyph: the capture lives outside every panel.
+      const recording = useRecorder().active !== null
       // The management page cannot open the right column: the shell refuses to address it
       // until a conversation surface is mounted, and that page is holding the main area. This
       // button sits in the conversation's own header, so it is mounted exactly when opening
@@ -5810,9 +5822,12 @@ function periodBucketOf(startedAt, unit) {
       return h(Btn, {
         type: 'button',
         style: styles.headerButton,
-        title: props.t('open'),
+        title: recording ? `${props.t('open')} · ${props.t('recording')}` : props.t('open'),
         onClick: () => props.open(),
-      }, props.t('open'))
+      }, h('span', { style: styles.headerButtonLabel }, [
+        h('span', { key: 'label' }, props.t('open')),
+        recording ? h('span', { key: 'dot', className: 'mr-rec-dot' }) : null,
+      ]))
     }
 
     /**
@@ -5877,7 +5892,7 @@ function periodBucketOf(startedAt, unit) {
       // glyph box is inline-flex and clips nothing, so nothing here changes the row's layout.
       return h('span', {
         style: { position: 'relative', width: size, height: size, display: 'inline-flex', flex: 'none' },
-      }, glyph, recording ? h('span', { className: 'mr-rec-dot' }) : null)
+      }, glyph, recording ? h('span', { className: 'mr-rec-dot mr-rec-dot--corner' }) : null)
     }
 
     /** Recognizer geometry, measured against the official preprocessor (design §9.2.3). */

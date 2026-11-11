@@ -565,10 +565,16 @@ check('准备过程对终态与停滞都有出口（不会空等十分钟）', c
 // 那个 glyph，给不出 badge），并在 release 时立刻清掉。
 check('侧边栏图标在录音中显示呼吸红点',
   clientSource.includes('const recording = useRecorder().active !== null')
-  && clientSource.includes("className: 'mr-rec-dot'")
-  && clientSource.includes('.mr-rec-dot { position: absolute')
+  && clientSource.includes("className: 'mr-rec-dot mr-rec-dot--corner'")
+  && clientSource.includes('.mr-rec-dot { width: 6px')
   && clientSource.includes('@keyframes mr-rec-breathe')
   && clientSource.includes('prefers-reduced-motion: reduce'))
+// 开始录音时插件会把左侧栏收起来，所以标题栏那颗常驻的「会议记录」按钮也要带同一个标，
+// 否则忘记录音的人在最需要看见的时候正好看不到。
+check('标题栏的会议记录按钮在录音中显示红点',
+  clientSource.includes("className: 'mr-rec-dot'")
+  && clientSource.includes("props.t('recording')")
+  && clientSource.includes("recording: '录音中'"))
 check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
 // §5.1/§5.2/§5.5 的实际入口：这些名字或调用一旦被改掉，对应功能就会静默消失。
 check('面板标题行含名称、类型与系列导航', clientSource.includes('titlerow') && clientSource.includes('series.prev') && clientSource.includes("saveMeta({ kind"))
