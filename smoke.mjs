@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url'
 import { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -321,6 +321,30 @@ const longTemplate = await call('/webhooks', { templates: { briefing: 'x'.repeat
 check('过长的模板被截断而不是整段存下', longTemplate.status === 200 && longTemplate.value.templates.briefing.length === 4000)
 await call('/webhooks', { templates: {} }, 'POST')
 
+// 会议目录：设置往返、默认值、以及"目录不存在就建出来"这一宿主动作（DSH 只把已存在的目录
+// 接受为工作区，所以缺目录时客户端自己建不了，必须宿主来）。
+check('会议目录未设置时回默认值', (await call('/webhooks')).value.meetingDir === '~/agents/meetings')
+const badDir = await call('/webhooks', { meetingDir: 'relative/dir' }, 'POST')
+check('相对路径的会议目录被拒', badDir.status === 400 && String(badDir.value.error).includes('绝对路径'))
+const rootDir = await call('/webhooks', { meetingDir: '/' }, 'POST')
+check('根目录不能当会议目录', rootDir.status === 400)
+const savedDir = await call('/webhooks', { meetingDir: resolve(tmp, 'meeting-dir-setting') }, 'POST')
+check('会议目录可保存并回读', savedDir.status === 200
+  && savedDir.value.meetingDir === resolve(tmp, 'meeting-dir-setting')
+  && (await call('/webhooks')).value.meetingDir === resolve(tmp, 'meeting-dir-setting'))
+const meetingDirTarget = resolve(tmp, 'meeting-dir-target')
+const preparedDir = await call('/meeting-dir/prepare', { path: meetingDirTarget }, 'POST')
+const preparedCanonical = await fs.realpath(meetingDirTarget).catch(() => '')
+check('会议目录不存在时被创建并回规范路径', preparedDir.status === 200 && preparedDir.value.path === preparedCanonical, JSON.stringify(preparedDir.value))
+check('会议目录真的落在磁盘上', (await fs.stat(meetingDirTarget).catch(() => null))?.isDirectory() === true)
+const badPrepare = await call('/meeting-dir/prepare', { path: 'relative/dir' }, 'POST')
+check('创建会议目录时拒绝相对路径', badPrepare.status === 400)
+const fallbackPrepare = await call('/meeting-dir/prepare', {}, 'POST')
+check('没给路径时用设置里的会议目录', fallbackPrepare.status === 200
+  && fallbackPrepare.value.path === await fs.realpath(resolve(tmp, 'meeting-dir-setting')).catch(() => ''))
+await call('/webhooks', { meetingDir: '' }, 'POST')
+check('清空会议目录回到默认值', (await call('/webhooks')).value.meetingDir === '~/agents/meetings')
+
 // ---------------------------------------------------------------------------
 // 6b. 推送工作安排
 // ---------------------------------------------------------------------------
@@ -566,8 +590,8 @@ check('准备过程对终态与停滞都有出口（不会空等十分钟）', c
 check('侧边栏行在录音中显示固定红点（行右侧、不呼吸、不发光）',
   clientSource.includes('const recording = useRecorder().active !== null')
   && clientSource.includes("className: 'mr-rec-hit mr-rec-hit--row'")
-  && clientSource.includes('.mr-rec-hit--row { position: absolute; right: 6px')
-  && clientSource.includes('.mr-rec-dot { width: 6px')
+  && clientSource.includes('.mr-rec-hit--row { position: absolute; right: 4px')
+  && clientSource.includes('.mr-rec-dot { width: 10px')
   && !clientSource.includes('@keyframes mr-rec-breathe')
   && !clientSource.includes('animation: mr-rec-breathe')
   && !clientSource.includes('box-shadow: 0 0 0 2px'))
@@ -585,6 +609,24 @@ check('红点可点击停止录音，且不触发所在按钮',
   && clientSource.includes('function showMeetingPanel') === false
   && /showMeetingPanel = \(\) => \{/u.test(clientSource))
 check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
+// 点红点只是"想问一下"：确认弹窗、然后停止、然后去会议管理，三步一件不能少。
+check('点红点先弹确认，确认后才停录并打开会议管理',
+  clientSource.includes('function StopConfirm')
+  && clientSource.includes("t('stopMeetingTitle')")
+  && clientSource.includes('askStop()')
+  && clientSource.includes('openHubPage()'))
+check('管理页可一键开始会议（目录→工作区→会话→直启）',
+  clientSource.includes("t('hubStartMeeting')")
+  && clientSource.includes('props.startMeeting()')
+  && clientSource.includes('function ensureMeetingWorkspace')
+  && clientSource.includes('beginMeetingInWorkspace(await ensureMeetingWorkspace())'))
+check('设置页有「会议与目录」tab，目录可手填也可选',
+  clientSource.includes("['meeting', 'settingsTabMeeting']")
+  && clientSource.includes('props.pickDirectory()')
+  && clientSource.includes("post('/webhooks', { meetingDir: meetingDirDraft })"))
+check('停止后管理页在收尾期间自动刷新列表',
+  clientSource.includes("recorder.phase !== 'idle'")
+  && clientSource.includes('void refresh() }, 2000'))
 // §5.1/§5.2/§5.5 的实际入口：这些名字或调用一旦被改掉，对应功能就会静默消失。
 check('面板标题行含名称、类型与系列导航', clientSource.includes('titlerow') && clientSource.includes('series.prev') && clientSource.includes("saveMeta({ kind"))
 check('四套一键提炼按钮都在', ['distillBriefing', 'distillReview', 'distillWeekly', 'distillMonthly'].every((key) => clientSource.includes(`${key}:`)))

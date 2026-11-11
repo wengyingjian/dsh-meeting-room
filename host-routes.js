@@ -22,6 +22,7 @@ import {
   DOCUMENT_KINDS,
   WEBHOOK_KINDS,
   PUSH_MODES,
+  DEFAULT_MEETING_DIR,
   DEFAULT_CUE_LIMIT,
   MAX_CUE_LIMIT,
   SPEAKER_THRESHOLD,
@@ -150,6 +151,7 @@ import {
   pushToPeople,
   readSpeechState,
   prepareSpeech,
+  prepareMeetingDirectory,
 } from './host-tools.js'
 
 /**
@@ -931,6 +933,8 @@ export function createHandler(ctx) {
           scoreWeights: settings.scoreWeights,
           // Custom distillation wording per type; an empty entry uses the built-in text.
           templates: settings.templates ?? {},
+          // Where a new meeting's conversation lives; unset means the built-in default.
+          meetingDir: settings.meetingDir === '' ? DEFAULT_MEETING_DIR : settings.meetingDir,
         })
         return
       }
@@ -975,6 +979,19 @@ export function createHandler(ctx) {
       }
       next.templates = kept
     }
+    // The meeting directory: where new meeting conversations live. An empty value clears it
+    // back to the built-in default; anything else must be a path the host can create.
+    if (typeof body.meetingDir === 'string') {
+      const raw = body.meetingDir.trim()
+      if (raw === '') {
+        next.meetingDir = ''
+      } else if (raw === '/' || !/^(?:~\/|\/)/u.test(raw) || raw.length > 400) {
+        sendJson(res, 400, { error: '会议目录必须是绝对路径（或以 ~/ 开头），且不能是根目录' })
+        return
+      } else {
+        next.meetingDir = raw
+      }
+    }
     const directory = dirname(webhookFile())
         await mkdir(directory, { recursive: true })
         await writeFile(webhookFile(), JSON.stringify(next, null, 2), 'utf8')
@@ -983,7 +1000,24 @@ export function createHandler(ctx) {
           configured: WEBHOOK_KINDS.filter((kind) => next[kind] !== ''),
           scoreWeights: { ...scoreWeights },
           templates: next.templates ?? {},
+          meetingDir: next.meetingDir === '' ? DEFAULT_MEETING_DIR : next.meetingDir,
         })
+        return
+      }
+
+      // Make the configured meeting directory exist and hand back its canonical path. DSH
+      // adopts a Workspace only for an existing directory, so this is the one step the client
+      // cannot do itself.
+      if (method === 'POST' && route === '/meeting-dir/prepare') {
+        const body = JSON.parse((await readBody(req)).toString('utf8'))
+        const settings = await readSettings()
+        const asked = typeof body.path === 'string' && body.path.trim() !== '' ? body.path : settings.meetingDir
+        try {
+          const prepared = await prepareMeetingDirectory(asked === '' ? DEFAULT_MEETING_DIR : asked)
+          sendJson(res, 200, { path: prepared })
+        } catch (failure) {
+          sendJson(res, 400, { error: failure instanceof Error ? failure.message : String(failure) })
+        }
         return
       }
 

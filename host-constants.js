@@ -245,6 +245,9 @@ export const SPEAKER_MERGE_THRESHOLD = 0.62
 /** Robot webhooks a meeting's confirmed assignments can be pushed to. */
 export const WEBHOOK_KINDS = ['dingtalk', 'wecom']
 
+/** Where a meeting's conversation lives until the person points it somewhere else. */
+export const DEFAULT_MEETING_DIR = '~/agents/meetings'
+
 /** How confirmed assignments reach people: the group robot, private notices, or both. */
 export const PUSH_MODES = ['group', 'work', 'both']
 
