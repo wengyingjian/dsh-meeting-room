@@ -563,18 +563,27 @@ check('准备过程对终态与停滞都有出口（不会空等十分钟）', c
 // 左侧栏是「还在录音」唯一天天在视线里的位置：开始录音会把工作区栏收成图标 rail，面板自己
 // 又可以被关掉而采集照跑。所以这条指示读共享 recorder、画在注册的图标组件里面（壳子只渲染
 // 那个 glyph，给不出 badge），并在 release 时立刻清掉。
-check('侧边栏图标在录音中显示呼吸红点',
+check('侧边栏行在录音中显示固定红点（行右侧、不呼吸、不发光）',
   clientSource.includes('const recording = useRecorder().active !== null')
-  && clientSource.includes("className: 'mr-rec-dot mr-rec-dot--corner'")
+  && clientSource.includes("className: 'mr-rec-hit mr-rec-hit--row'")
+  && clientSource.includes('.mr-rec-hit--row { position: absolute; right: 6px')
   && clientSource.includes('.mr-rec-dot { width: 6px')
-  && clientSource.includes('@keyframes mr-rec-breathe')
-  && clientSource.includes('prefers-reduced-motion: reduce'))
+  && !clientSource.includes('@keyframes mr-rec-breathe')
+  && !clientSource.includes('animation: mr-rec-breathe')
+  && !clientSource.includes('box-shadow: 0 0 0 2px'))
 // 开始录音时插件会把左侧栏收起来，所以标题栏那颗常驻的「会议记录」按钮也要带同一个标，
 // 否则忘记录音的人在最需要看见的时候正好看不到。
 check('标题栏的会议记录按钮在录音中显示红点',
-  clientSource.includes("className: 'mr-rec-dot'")
+  clientSource.includes("className: 'mr-rec-hit'")
   && clientSource.includes("props.t('recording')")
   && clientSource.includes("recording: '录音中'"))
+// 点红点是想停下这场会议，不是想打开管理页：事件就地吃掉，停止交给面板唯一的停止路径。
+check('红点可点击停止录音，且不触发所在按钮',
+  clientSource.includes('function askStop()')
+  && clientSource.includes('stopAsk.handlers.add(handler)')
+  && clientSource.includes("title: t('stop')")
+  && clientSource.includes('function showMeetingPanel') === false
+  && /showMeetingPanel = \(\) => \{/u.test(clientSource))
 check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
 // §5.1/§5.2/§5.5 的实际入口：这些名字或调用一旦被改掉，对应功能就会静默消失。
 check('面板标题行含名称、类型与系列导航', clientSource.includes('titlerow') && clientSource.includes('series.prev') && clientSource.includes("saveMeta({ kind"))

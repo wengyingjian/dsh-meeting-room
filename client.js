@@ -1397,19 +1397,15 @@ registerProcessor('meeting-capture', MeetingCapture)
 .mr-ufield.mr-layout-title { flex: 1 1 auto; min-width: 0; }
 .mr-hover { transition: background .12s ease; }
 .mr-hover:hover { background: var(--dsw-alias-bg-layer-2); }
-/* The "still recording" mark: a breathing red dot. The capture outlives its panel and the
-   sidebar hides itself during the meeting take-over, so this mark appears both on the
-   left-sidebar glyph and beside the header's 会议记录 button — the one control that stays
-   on screen for as long as the conversation does. */
-.mr-rec-dot { width: 6px; height: 6px; border-radius: 50%; flex: none;
-  background: var(--dsw-alias-state-error-primary);
-  animation: mr-rec-breathe 1.6s ease-in-out infinite; }
-/* Inside a glyph the dot has to hang off the icon's corner instead of taking layout space. */
-.mr-rec-dot--corner { position: absolute; top: -1px; right: -1px; pointer-events: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent); }
-@keyframes mr-rec-breathe { 0%, 100% { opacity: .35; transform: scale(.7); } 50% { opacity: 1; transform: scale(1); } }
-/* A dot that pulses forever is motion the person did not ask for. */
-@media (prefers-reduced-motion: reduce) { .mr-rec-dot { animation: none; opacity: 1; } }
+/* The "still recording" mark: a fixed-size red dot, no animation and no glow. It shows
+   beside the header's 会议记录 label and at the right edge of the sidebar row; the dot is
+   its own hit area so a click stops the meeting instead of opening the panel behind it. */
+.mr-rec-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-state-error-primary); }
+.mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 16px;
+  height: 16px; flex: none; cursor: pointer; }
+/* In the sidebar row the mark hangs at the row's right edge, after the label. The row is the
+   shell's button; MeetingPanelIcon only lends it a positioning context for this. */
+.mr-rec-hit--row { position: absolute; right: 6px; top: 50%; margin-top: -8px; }
 `
     if (typeof document !== 'undefined' && document.getElementById('mr-control-style') === null) {
       const sheet = document.createElement('style')
@@ -2325,6 +2321,31 @@ function periodBucketOf(startedAt, unit) {
      * open hears the event, a panel that mounts afterwards consumes the flag.
      */
     const guideBegin = { pending: false, opened: false, deadline: 0, target: '' }
+
+    /**
+     * A stop asked for from outside the panel — the recording mark in the sidebar row and in
+     * the conversation header. The panel owns the stop path (drain the last cues, re-label,
+     * finalize), so the ask is handed to it instead of duplicated here; an ask with no panel
+     * mounted waits for the next one.
+     */
+    const stopAsk = { pending: false, handlers: new Set() }
+
+    /** Opens the meeting column; the client half fills this in when it applies. */
+    let showMeetingPanel = () => false
+
+    /** Run the stop path wherever a meeting panel is mounted; open the column when none is. */
+    function askStop() {
+      // Not recording, or already on its way out: a second click must not run stop twice.
+      if (recorder.active === null || recorder.active.stopping === true) return
+      if (stopAsk.handlers.size > 0) {
+        for (const handler of [...stopAsk.handlers]) handler()
+        return
+      }
+      // Nothing is mounted to run the stop: open the meeting column, and the panel that mounts
+      // consumes `pending` in its own stop-carrying effect.
+      stopAsk.pending = true
+      showMeetingPanel()
+    }
 
     /**
      * Read the shared recorder inside a component, re-rendering on every change.
@@ -4275,6 +4296,19 @@ function periodBucketOf(startedAt, unit) {
         setPhase('idle')
       }, [dismissToast, flush, release, t, toast, updateToast])
 
+      // A stop asked for from outside the panel (the recording mark) runs the same path as the
+      // panel's own button: one place drains, re-labels and finalizes. A pending ask covers a
+      // click that landed while no panel was mounted.
+      React.useEffect(() => {
+        const handler = () => { void stop() }
+        stopAsk.handlers.add(handler)
+        if (stopAsk.pending === true) {
+          stopAsk.pending = false
+          handler()
+        }
+        return () => { stopAsk.handlers.delete(handler) }
+      }, [stop])
+
       /**
        * Stop in two presses. The Stop and Pause buttons sit side by side, and a click meant for
        * "just a break" must not end the meeting: the first press only arms, the second within
@@ -5826,7 +5860,18 @@ function periodBucketOf(startedAt, unit) {
         onClick: () => props.open(),
       }, h('span', { style: styles.headerButtonLabel }, [
         h('span', { key: 'label' }, props.t('open')),
-        recording ? h('span', { key: 'dot', className: 'mr-rec-dot' }) : null,
+        recording ? h('span', {
+          key: 'dot',
+          className: 'mr-rec-hit',
+          role: 'button',
+          title: props.t('stop'),
+          onClick: (event) => {
+            // The button opens the panel: the mark stops the meeting instead of doing both.
+            event.preventDefault()
+            event.stopPropagation()
+            askStop()
+          },
+        }, h('span', { className: 'mr-rec-dot' })) : null,
       ]))
     }
 
@@ -5859,19 +5904,29 @@ function periodBucketOf(startedAt, unit) {
      * Draw the left-sidebar row glyph. The row's registered component *is* the icon,
      * and the shell renders it as the row's direct icon child.
      *
-     * A meeting that is recording marks this glyph with a breathing red dot. The capture
-     * outlives its panel, so the mark follows the shared recorder rather than a mounted
-     * view; and the sidebar is the one place still on screen after starting a meeting
-     * collapses the workspace rail, which is exactly when "still recording" has to be
-     * readable at a glance.
-     * @param props - Owner-supplied glyph size.
+     * While a meeting records, the row also carries the recording mark at its right edge,
+     * after the label — not on the glyph — and a click there stops the meeting without
+     * opening the management page behind it. The capture outlives its panel, so the mark
+     * follows the shared recorder rather than a mounted view.
+     * @param props - Owner-supplied glyph size and copy.
      * @returns the icon element.
      */
     function MeetingPanelIcon(props) {
+      const t = typeof props.t === 'function' ? props.t : (key) => key
       const size = typeof props.size === 'number' ? props.size : 18
       // `active` is the microphone's span: set when capture opens and cleared only by the
       // stop path, so a paused meeting still reads as live (the mic is still held).
       const recording = useRecorder().active !== null
+      const anchor = React.useRef(null)
+      // The row is the shell's button and this component is its icon: borrow the button as a
+      // positioning context so the mark can sit at the row's edge instead of inside the glyph.
+      React.useEffect(() => {
+        const row = anchor.current === null ? null : anchor.current.closest('button')
+        if (row === null) return undefined
+        const prior = row.style.position
+        row.style.position = 'relative'
+        return () => { row.style.position = prior }
+      }, [])
       const glyph = h('svg', {
         width: size,
         height: size,
@@ -5888,11 +5943,24 @@ function periodBucketOf(startedAt, unit) {
         h('path', { key: 'pole', d: 'M12 16v4' }),
         h('path', { key: 'lines', d: 'M8 10.5h2.5M13.5 8.5h2.5M8 13h8' }),
       ])
-      // The wrapper takes the owner's square so the dot can sit in its corner; the shell's
-      // glyph box is inline-flex and clips nothing, so nothing here changes the row's layout.
+      // The wrapper keeps the owner's square; the mark is absolutely positioned against the
+      // row, so it takes no layout space inside the glyph box.
       return h('span', {
-        style: { position: 'relative', width: size, height: size, display: 'inline-flex', flex: 'none' },
-      }, glyph, recording ? h('span', { className: 'mr-rec-dot mr-rec-dot--corner' }) : null)
+        ref: anchor,
+        style: { width: size, height: size, display: 'inline-flex', flex: 'none' },
+      }, glyph, recording
+        ? h('span', {
+          className: 'mr-rec-hit mr-rec-hit--row',
+          role: 'button',
+          title: t('stop'),
+          onClick: (event) => {
+            // The row opens the management page on click: a stop must not do both.
+            event.preventDefault()
+            event.stopPropagation()
+            askStop()
+          },
+        }, h('span', { className: 'mr-rec-dot' }))
+        : null)
     }
 
     /** Recognizer geometry, measured against the official preprocessor (design §9.2.3). */
@@ -7975,6 +8043,18 @@ function periodBucketOf(startedAt, unit) {
          * @param focus - whether to take over the frame as well.
          * @returns whether the column accepted the tab.
          */
+        // A stop asked from the sidebar mark with no panel mounted still has to run the panel's
+        // stop path, so open the column first — the same call the header button makes.
+        showMeetingPanel = () => {
+          try {
+            ctx.sidebarRight.openTab(TAB_KIND)
+            return true
+          } catch (failure) {
+            console.warn('meeting-room: could not open the meeting column for a stop', failure)
+            return false
+          }
+        }
+
         function openMeetingFocus(focus = true) {
           // Opening expands the column and seeds its default width when it never had one. This
           // comes first and alone: when the column refuses the tab (no mounted conversation
