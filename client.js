@@ -4255,9 +4255,8 @@ function periodBucketOf(startedAt, unit) {
         setPhase('starting')
         // No frame take-over here on purpose. Opening the column and putting the recording's
         // conversation on screen happens once capture is up (the tail of beginCapture), but the
-        // workspace rail stays as the person left it and the column keeps its own width:
-        // collapsing the rail is the header button's 会议专注 layout, not something every
-        // recording should impose. Keeping the rail also keeps the session list, the management
+        // workspace rail stays as the person left it and both columns keep their own width —
+        // no entry reshapes the frame any more, which keeps the session list, the management
         // page, and the recording mark in view while the meeting runs.
         try {
           // Read here, not at the top: a start that first waits for the model keeps the flag for
@@ -6002,8 +6001,7 @@ function periodBucketOf(startedAt, unit) {
             pending.openedByHeader = true
             console.info('meeting-room: header opens the panel for', pending.meetingId)
             try {
-              if (typeof props.openOnly === 'function') props.openOnly()
-              else props.open()
+              props.open()
             } catch (failure) {
               console.warn('meeting-room: the header could not open the meeting panel', failure)
             }
@@ -6016,8 +6014,7 @@ function periodBucketOf(startedAt, unit) {
             if (Date.now() > guideBegin.deadline) { guideBegin.pending = false; return }
             guideBegin.opened = true
             try {
-              if (typeof props.openOnly === 'function') props.openOnly()
-              else props.open()
+              props.open()
             } catch (failure) {
               console.warn('meeting-room: the header could not open the meeting panel', failure)
             }
@@ -8250,57 +8247,6 @@ function periodBucketOf(startedAt, unit) {
           return typeof sidebar === 'number' ? sidebar === 0 : null
         }
 
-        /**
-         * Set the right panel's width preference. The layout service exposes no width
-         * setter, so this writes the store's own action, which clamps to the frame's
-         * maximum — the widest the panel can be while the conversation stays visible.
-         * @param px - Requested width in px.
-         */
-        function setRightbarWidth(px) {
-          try {
-            layoutStore()?.actions?.setRightbar?.(px)
-          } catch (failure) {
-            console.warn('meeting-room: could not set the right panel width', failure)
-          }
-        }
-
-        /** Panel width to restore when leaving meeting focus; null until the first focus. */
-        let savedRightbar = null
-
-        /**
-         * Toggle meeting focus from the session header. Opening: collapse the workspace
-         * rail, open the meeting panel, and widen it to the frame's maximum while the
-         * conversation stays visible. Closing: shut the right panel and give the frame
-         * back to the workspace.
-         *
-         * The decision follows the pane's real state, never a remembered flag: a pane the
-         * user closed by any other route would otherwise leave the memory stale and make every
-         * later click take the opening branch again, collapsing the rail each time.
-         */
-        function toggleMeetingFocus() {
-          if (ctx.sidebarRight.isExpanded()) {
-            // Collapse the column first: it is the visible close of the right window.
-            ctx.sidebarRight.toggleExpanded()
-            if (readRailCollapsed() === true) ctx.layout.toggleSidebar()
-            if (savedRightbar !== null) setRightbarWidth(savedRightbar)
-            // The frame is the person's again, so the next take-over saves what it finds then.
-            savedRightbar = null
-            return
-          }
-          openMeetingFocus()
-        }
-
-        /**
-         * Open the meeting panel without ever closing it. `focus` (the default, used by a
-         * click on the header button) also collapses the workspace rail and widens the column;
-         * every automatic open — a recording that starts, the pending-start watcher, the
-         * management page — passes false, so the person keeps their rail and their panel width.
-         *
-         * Repeating the call is harmless: a column already at its maximum must not record
-         * that maximum as the width to restore when the person closes it again.
-         * @param focus - whether to take over the frame as well.
-         * @returns whether the column accepted the tab.
-         */
         // The mark's confirmation sends the person to the record they just ended.
         openHubPage = () => {
           try {
@@ -8420,28 +8366,28 @@ function periodBucketOf(startedAt, unit) {
           return ''
         }
 
-        function openMeetingFocus(focus = true) {
-          // Opening expands the column and seeds its default width when it never had one. This
-          // comes first and alone: when the column refuses the tab (no mounted conversation
-          // surface, e.g. the management page is on screen) nothing else may move, or the
-          // person is left with a collapsed workspace and no panel to show for it.
+        /**
+         * Open the meeting panel as an ordinary right-column tab.
+         *
+         * Nothing else moves: the workspace rail and both column widths stay exactly as the
+         * person left them, the same handling the management page's left-sidebar row uses. The
+         * old take-over (rail in, column at its widest) pushed the conversation to its minimum
+         * width and hid the session list and the recording mark, so it is gone from every entry.
+         * @returns whether the column accepted the tab.
+         */
+        function openMeetingColumn() {
           try {
             ctx.sidebarRight.openTab(TAB_KIND)
+            return true
           } catch (failure) {
-            console.warn('meeting-room: the right panel refused the tab', failure)
+            // The shell needs a mounted, adopted session surface; report the real reason
+            // occasionally instead of on every retry.
+            panelOpenFailures += 1
+            if (panelOpenFailures === 1 || panelOpenFailures % 40 === 0) {
+              console.warn('meeting-room: the right panel refused the tab', failure)
+            }
             return false
           }
-          if (focus !== true) return true
-          if (readRailCollapsed() === false) ctx.layout.toggleSidebar()
-          const info = layoutStore()?.getSnapshot?.()?.layoutInfo
-          const viewport = typeof info?.viewportWidth === 'number' ? info.viewportWidth : window.innerWidth
-          const current = typeof info?.rightbar === 'number' ? info.rightbar : 0
-          // Only a width the person chose is worth restoring: one already at (or near) the
-          // maximum is this very take-over, and restoring it later would leave the column
-          // permanently wide.
-          if (savedRightbar === null && current > 0 && current < viewport * 0.9) savedRightbar = current
-          setRightbarWidth(viewport)
-          return true
         }
 
         /**
@@ -8450,10 +8396,10 @@ function periodBucketOf(startedAt, unit) {
          * The panel's own `/record` poll runs inside the panel, so a request made while the
          * column is shut would wait for a panel that never opens — the request looked like a
          * failure even though the host had stored it. Watching the host here closes that gap:
-         * the request itself performs the header button's take-over, the panel mounts, and
-         * the panel's existing poll starts the recording. It also means the model never has
-         * to drive the layout: whether its reply is complete, terse or cut off by the
-         * provider's output filter, the take-over has already happened in code.
+         * the request itself opens the meeting column, the panel mounts, and the panel's own
+         * poll starts the recording. The model never touches the layout either way: whether
+         * its reply is complete, terse or cut off by the provider's output filter, the column
+         * is already open in code.
          */
         let watchedStart = 0
         async function watchPendingStart() {
@@ -8474,7 +8420,7 @@ function periodBucketOf(startedAt, unit) {
           try {
             // Open the column only: a start asked for by the agent is still a start, and a start
             // no longer reshapes the frame (the rail and the column width are the person's).
-            openMeetingFocus(false)
+            openMeetingColumn()
           } catch (failure) {
             console.warn('meeting-room: the pending start could not open the meeting column', failure)
           }
@@ -8604,7 +8550,7 @@ function periodBucketOf(startedAt, unit) {
           id: 'meeting-room.open',
           order: 20,
           locale: NS,
-          inject: (sessionId) => ({ sessionId, open: () => toggleMeetingFocus(), openOnly: () => openMeetingFocus(false) }),
+          inject: (sessionId) => ({ sessionId, open: () => openMeetingColumn() }),
         }, OpenMeetingButton))
 
         // The left-sidebar row and its main-panel page share one id: the row addresses the page.

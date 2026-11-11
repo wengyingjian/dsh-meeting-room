@@ -651,12 +651,14 @@ check('停止后回到该会议的会话（拿不到会话才退回管理页记�
   && clientSource.includes('ctx.uiWorkspace.openSession(sessionId)')
   && clientSource.includes('const hubTabSeats = new Set()')
   && clientSource.includes("seat('records')"))
-// 开局不再抢画框（后续决定，推翻原 AC-8）：左栏与栏宽是人的，「会议专注」只留给头部按钮。
-check('开始录音不再收起左侧栏，专注布局只在头部按钮',
+// 开局与头部按钮都不再抢画框（后续决定，推翻原 AC-8）：左栏、栏宽是人的，会议面板只是普通右栏标签。
+check('打开会议面板的每个入口都不动布局',
   !clientSource.includes('props.focusMeeting()')
-  && clientSource.includes('openMeetingFocus(false)')
-  && clientSource.includes('function toggleMeetingFocus()')
-  && clientSource.includes('if (readRailCollapsed() === false) ctx.layout.toggleSidebar()'))
+  && !clientSource.includes('function toggleMeetingFocus()')
+  && !clientSource.includes('savedRightbar')
+  && !clientSource.includes('setRightbarWidth')
+  && !clientSource.includes('if (readRailCollapsed() === false) ctx.layout.toggleSidebar()')
+  && clientSource.includes('function openMeetingColumn()'))
 check('停止后管理页在收尾期间自动刷新列表',
   clientSource.includes("recorder.phase !== 'idle'")
   && clientSource.includes('void refresh() }, 2000'))
@@ -922,11 +924,14 @@ check('开始录音不动布局（只切会话、开会议栏）',
   && clientSource.includes('props.focusMeetingPanel()')
   && !clientSource.includes('props.focusMeeting()')
   && !clientSource.includes('focusMeeting: () => {')
-  && clientSource.includes('openMeetingFocus(false)'))
+  && clientSource.includes('openMeetingColumn()'))
 check('面板没挂载时由插件层看守打开会议列', clientSource.includes("get('/pending')")
   && clientSource.includes('watchPendingStart') && clientSource.includes("setInterval(() => { void watchPendingStart() }"))
-check('接管后关闭会还原用户原来的宽度，不会被最大值污染', clientSource.includes('current < viewport * 0.9')
-  && clientSource.includes('savedRightbar = null'))
+// 头部那颗按钮跟左侧「会议管理」一样：只打开右栏的会议标签，不折叠左栏、不改栏宽、不再 toggle。
+check('头部按钮只按当前布局打开会议面板',
+  clientSource.includes('open: () => openMeetingColumn()')
+  && !clientSource.includes('ctx.sidebarRight.toggleExpanded()')
+  && !clientSource.includes('actions?.setRightbar'))
 
 // 人点「开始记录」时，录音之外还要让 agent 自己开工：/start 向该会话投一条普通 prompt。
 const prompted = []
