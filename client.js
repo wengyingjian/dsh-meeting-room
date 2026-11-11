@@ -156,6 +156,21 @@ registerProcessor('meeting-capture', MeetingCapture)
       recording: '录音中',
       start: '开始记录',
       stop: '停止记录',
+      stopMeetingTitle: '停止这场会议？',
+      stopMeetingBody: '确认后停止录音并打开「会议管理」；剩余收尾会在后台跑完，列表自动刷新。',
+      stopConfirmYes: '停止会议',
+      hubStartMeeting: '开始会议',
+      hubStarting: '正在准备…',
+      hubRecording: '正在录音',
+      settingsTabMeeting: '会议与目录',
+      meetingDirHint: '新会议的会话都开在这个目录下：目录不存在会自动创建，并把它加为工作区。留空使用默认值 ~/agents/meetings。',
+      meetingDirPlaceholder: '~/agents/meetings',
+      meetingDirPick: '选择目录…',
+      meetingDirSave: '保存',
+      meetingDirSaved: '会议目录已保存',
+      startAlreadyRecording: '正在录音，先停止这场会议',
+      startNoWorkspaceApi: '这个 DSH 版本没有可用的工作区创建能力',
+      startNoWorkspacePath: '会议目录准备失败',
       idle: '未开始',
       starting: '正在启动麦克风…',
       transcribing: '识别中…',
@@ -587,6 +602,21 @@ registerProcessor('meeting-capture', MeetingCapture)
       recording: 'Recording',
       start: 'Start',
       stop: 'Stop',
+      stopMeetingTitle: 'Stop this meeting?',
+      stopMeetingBody: 'Stopping opens Meeting management; the remaining wrap-up keeps running in the background and the list refreshes itself.',
+      stopConfirmYes: 'Stop meeting',
+      hubStartMeeting: 'Start a meeting',
+      hubStarting: 'Preparing…',
+      hubRecording: 'Recording',
+      settingsTabMeeting: 'Meeting & folder',
+      meetingDirHint: 'New meetings open their conversation in this folder: it is created when missing and adopted as a workspace. Empty means the default ~/agents/meetings.',
+      meetingDirPlaceholder: '~/agents/meetings',
+      meetingDirPick: 'Choose folder…',
+      meetingDirSave: 'Save',
+      meetingDirSaved: 'Meeting folder saved',
+      startAlreadyRecording: 'A meeting is recording — stop it first',
+      startNoWorkspaceApi: 'This DSH version cannot create a workspace',
+      startNoWorkspacePath: 'The meeting folder could not be prepared',
       idle: 'Idle',
       starting: 'Starting the microphone…',
       transcribing: 'Transcribing…',
@@ -1399,13 +1429,14 @@ registerProcessor('meeting-capture', MeetingCapture)
 .mr-hover:hover { background: var(--dsw-alias-bg-layer-2); }
 /* The "still recording" mark: a fixed-size red dot, no animation and no glow. It shows
    beside the header's 会议记录 label and at the right edge of the sidebar row; the dot is
-   its own hit area so a click stops the meeting instead of opening the panel behind it. */
-.mr-rec-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-state-error-primary); }
-.mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 16px;
-  height: 16px; flex: none; cursor: pointer; }
+   its own hit area so a click can ask to stop the meeting instead of pressing the control
+   it sits in. */
+.mr-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dsw-alias-state-error-primary); }
+.mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 22px;
+  height: 22px; flex: none; cursor: pointer; }
 /* In the sidebar row the mark hangs at the row's right edge, after the label. The row is the
    shell's button; MeetingPanelIcon only lends it a positioning context for this. */
-.mr-rec-hit--row { position: absolute; right: 6px; top: 50%; margin-top: -8px; }
+.mr-rec-hit--row { position: absolute; right: 4px; top: 50%; margin-top: -11px; }
 `
     if (typeof document !== 'undefined' && document.getElementById('mr-control-style') === null) {
       const sheet = document.createElement('style')
@@ -1748,6 +1779,62 @@ registerProcessor('meeting-capture', MeetingCapture)
           foot,
         ]),
       ])
+    }
+
+    /**
+     * The confirmation both recording marks raise before a meeting ends: one surface, so the
+     * sidebar row and the header button cannot drift into different behaviour.
+     * @param props - open flag, copy and the cancel / confirm callbacks.
+     * @returns the dialog, or nothing while closed.
+     */
+    function StopConfirm(props) {
+      if (props.open !== true) return null
+      const t = props.t
+      // Both marks live inside a shell button (the sidebar row, the header's 会议记录 card), so
+      // every click inside the dialog is kept from pressing that button underneath.
+      const keep = (event) => { event.stopPropagation() }
+      return h('span', { onClick: keep, onMouseDown: keep, onPointerDown: keep }, h(Dialog, {
+        title: t('stopMeetingTitle'),
+        description: t('stopMeetingBody'),
+        onClose: props.onCancel,
+        footer: [
+          h(Btn, { key: 'cancel', type: 'button', style: styles.button, onClick: props.onCancel }, t('cancelEntry')),
+          h(Btn, { key: 'stop', type: 'button', style: { ...styles.button, ...styles.buttonDanger }, onClick: props.onConfirm }, t('stopConfirmYes')),
+        ],
+      }, []))
+    }
+
+    /**
+     * The recording mark both surfaces share: the dot, its hit area and the confirmation.
+     *
+     * One component, so the sidebar row and the header button cannot drift into different ask
+     * behaviour; placement is the caller's class, because the two sit in different boxes.
+     * @param props - placement class, tooltip copy, translations and the page opener.
+     * @returns the mark, plus the confirmation while it is up.
+     */
+    function RecordingMark(props) {
+      const [asking, setAsking] = React.useState(false)
+      return h(React.Fragment, null, h('span', {
+        className: props.className,
+        role: 'button',
+        title: props.title,
+        onClick: (event) => {
+          // The shell button this mark sits in must not act as well: asking to stop is enough.
+          event.preventDefault()
+          event.stopPropagation()
+          setAsking(true)
+        },
+      }, h('span', { className: 'mr-rec-dot' })), h(StopConfirm, {
+        open: asking,
+        t: props.t,
+        onCancel: () => setAsking(false),
+        // Confirming ends the meeting and goes where its record is, exactly as asked.
+        onConfirm: () => {
+          setAsking(false)
+          askStop()
+          openHubPage()
+        },
+      }))
     }
 
     /**
@@ -2191,6 +2278,7 @@ function periodBucketOf(startedAt, unit) {
       ['speaker', 'settingsTabSpeaker'],
       ['weights', 'settingsTabWeights'],
       ['templates', 'settingsTabTemplates'],
+      ['meeting', 'settingsTabMeeting'],
     ]
 
     /** Local model kinds, in the order the 模型 page lists them. */
@@ -2332,6 +2420,9 @@ function periodBucketOf(startedAt, unit) {
 
     /** Opens the meeting column; the client half fills this in when it applies. */
     let showMeetingPanel = () => false
+
+    /** Opens the meeting management page; the client half fills this in when it applies. */
+    let openHubPage = () => {}
 
     /** Run the stop path wherever a meeting panel is mounted; open the column when none is. */
     function askStop() {
@@ -5860,18 +5951,12 @@ function periodBucketOf(startedAt, unit) {
         onClick: () => props.open(),
       }, h('span', { style: styles.headerButtonLabel }, [
         h('span', { key: 'label' }, props.t('open')),
-        recording ? h('span', {
+        recording ? h(RecordingMark, {
           key: 'dot',
           className: 'mr-rec-hit',
-          role: 'button',
           title: props.t('stop'),
-          onClick: (event) => {
-            // The button opens the panel: the mark stops the meeting instead of doing both.
-            event.preventDefault()
-            event.stopPropagation()
-            askStop()
-          },
-        }, h('span', { className: 'mr-rec-dot' })) : null,
+          t: props.t,
+        }) : null,
       ]))
     }
 
@@ -5949,17 +6034,7 @@ function periodBucketOf(startedAt, unit) {
         ref: anchor,
         style: { width: size, height: size, display: 'inline-flex', flex: 'none' },
       }, glyph, recording
-        ? h('span', {
-          className: 'mr-rec-hit mr-rec-hit--row',
-          role: 'button',
-          title: t('stop'),
-          onClick: (event) => {
-            // The row opens the management page on click: a stop must not do both.
-            event.preventDefault()
-            event.stopPropagation()
-            askStop()
-          },
-        }, h('span', { className: 'mr-rec-dot' }))
+        ? h(RecordingMark, { className: 'mr-rec-hit mr-rec-hit--row', title: t('stop'), t })
         : null)
     }
 
@@ -6554,6 +6629,11 @@ function periodBucketOf(startedAt, unit) {
       const [deptId, setDeptId] = React.useState(0)
       const [directoryBusy, setDirectoryBusy] = React.useState(false)
       const [settingsNote, setSettingsNote] = React.useState('')
+      /** The meeting directory being edited, and the last result of saving it. */
+      const [meetingDirDraft, setMeetingDirDraft] = React.useState('')
+      const [meetingDirNote, setMeetingDirNote] = React.useState('')
+      /** 「开始会议」 is preparing a conversation; the button stays disabled meanwhile. */
+      const [startBusy, setStartBusy] = React.useState(false)
       /** The hidden file field behind the import button, and whether an import is running. */
       const importField = React.useRef(null)
       const [importing, setImporting] = React.useState(false)
@@ -6625,6 +6705,9 @@ function periodBucketOf(startedAt, unit) {
               people: Array.isArray(roster.people) ? roster.people : [],
               departments: Array.isArray(roster.departments) ? roster.departments : [],
             })
+            // The host answers with the value in force, default included, so the field is never
+            // blank and 开始会议 always has a directory to work with.
+            setMeetingDirDraft(typeof config.meetingDir === 'string' ? config.meetingDir : '')
             // The secret never comes back, so only displayable fields are prefilled.
             setSettingsDraft((value) => ({
               ...value,
@@ -6637,6 +6720,31 @@ function periodBucketOf(startedAt, unit) {
         })()
         return () => { cancelled = true }
       }, [hubTab])
+
+      /** Ask the host's own folder chooser for the meeting directory. */
+      const pickMeetingDir = React.useCallback(async () => {
+        setError('')
+        try {
+          const picked = await props.pickDirectory()
+          // Cancelling resolves to null and must leave whatever was typed untouched.
+          if (typeof picked === 'string' && picked !== '') setMeetingDirDraft(picked)
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : String(failure))
+        }
+      }, [props])
+
+      /** Store the meeting directory; the host answers with the value now in force. */
+      const saveMeetingDir = React.useCallback(async () => {
+        setError('')
+        setMeetingDirNote('')
+        try {
+          const reply = await post('/webhooks', { meetingDir: meetingDirDraft })
+          if (typeof reply.meetingDir === 'string') setMeetingDirDraft(reply.meetingDir)
+          setMeetingDirNote(t('meetingDirSaved'))
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : String(failure))
+        }
+      }, [meetingDirDraft, t])
 
       /** Store the robot webhooks and the DingTalk internal application. */
       const saveSettings = React.useCallback(async () => {
@@ -6782,6 +6890,22 @@ function periodBucketOf(startedAt, unit) {
       }, [])
 
       React.useEffect(() => { void refresh() }, [refresh])
+
+      // A stop pressed from a recording mark keeps running after this page opens: keep the
+      // record list fresh while the meeting finalizes, then read it once more when it settles.
+      const recorder = useRecorder()
+      const recordsBusy = recorder.active !== null || recorder.phase !== 'idle'
+      const lastBusy = React.useRef(recordsBusy)
+      React.useEffect(() => {
+        const settled = lastBusy.current && !recordsBusy
+        lastBusy.current = recordsBusy
+        if (!recordsBusy) {
+          if (settled) void refresh()
+          return undefined
+        }
+        const timer = window.setInterval(() => { void refresh() }, 2000)
+        return () => window.clearInterval(timer)
+      }, [recordsBusy, refresh])
 
       /** Read the cloud summary and seed the fields with it (the key stays blank by design). */
       const loadCloud = React.useCallback(async () => {
@@ -7283,6 +7407,32 @@ function periodBucketOf(startedAt, unit) {
             ? t('hubNoSession')
             : conversationOpen ? t('hubSessionOpen') : t('hubSessionBackground')),
           h('div', { key: 'hint', style: styles.hint }, t('hubHowTo')),
+          // One click starts a meeting where the record belongs: the configured folder's
+          // Workspace, a fresh conversation, the meeting panel open and already recording.
+          h('div', { key: 'startrow', style: { ...styles.row, marginTop: '10px' } }, [
+            h(Btn, {
+              key: 'startmeeting',
+              type: 'button',
+              style: styles.buttonPrimary,
+              disabled: recordsBusy || startBusy,
+              title: recordsBusy ? t('startAlreadyRecording') : t('hubStartMeeting'),
+              onClick: () => {
+                if (startBusy) return
+                setStartBusy(true)
+                setError('')
+                void (async () => {
+                  try {
+                    const problem = await props.startMeeting()
+                    if (typeof problem === 'string' && problem !== '') setError(problem)
+                  } catch (failure) {
+                    setError(failure instanceof Error ? failure.message : String(failure))
+                  } finally {
+                    setStartBusy(false)
+                  }
+                })()
+              },
+            }, startBusy ? t('hubStarting') : recordsBusy ? t('hubRecording') : t('hubStartMeeting')),
+          ]),
         ]),
         h('div', { key: 'tabs', style: styles.tabs }, HUB_TAB_VALUES.map((value) => h(Btn, {
           key: value,
@@ -7554,6 +7704,25 @@ function periodBucketOf(startedAt, unit) {
             h('div', { key: 'templateactions', style: styles.row }, [
               h(Btn, { key: 'savetemplates', type: 'button', style: styles.button, onClick: () => { void saveTemplates() } }, t('templateSave')),
               templatesNote === '' ? null : h('span', { key: 'note', style: styles.status }, templatesNote),
+            ]),
+            ]),
+            settingsTab !== 'meeting' ? null : h('div', { key: 'settings-meeting', style: styles.list }, [
+            // Where a meeting's conversation lives. The host fills in the default, so the field
+            // is never empty and 开始会议 always has somewhere to go.
+            h('span', { key: 'meetingdirtitle', style: styles.label }, t('settingsTabMeeting')),
+            h('span', { key: 'meetingdirhint', style: styles.hint }, t('meetingDirHint')),
+            h('div', { key: 'meetingdirrow', style: styles.row }, [
+              h(Field, {
+                key: 'meetingdir',
+                style: styles.inlineWide,
+                value: meetingDirDraft,
+                placeholder: t('meetingDirPlaceholder'),
+                spellCheck: false,
+                onChange: (event) => setMeetingDirDraft(event.target.value),
+              }),
+              h(Btn, { key: 'pickdir', type: 'button', style: styles.smallButton, onClick: () => { void pickMeetingDir() } }, t('meetingDirPick')),
+              h(Btn, { key: 'savedir', type: 'button', style: styles.button, onClick: () => { void saveMeetingDir() } }, t('meetingDirSave')),
+              meetingDirNote === '' ? null : h('span', { key: 'meetingdirnote', style: styles.status }, meetingDirNote),
             ]),
             ]),
             settingsTab !== 'speaker' ? null : h('div', { key: 'settings-speaker', style: styles.list }, [
@@ -8055,6 +8224,103 @@ function periodBucketOf(startedAt, unit) {
           }
         }
 
+        // The mark's confirmation sends the person to the record they just ended.
+        openHubPage = () => {
+          try {
+            ctx.layout.selectPanel(PANEL_ID)
+          } catch (failure) {
+            console.warn('meeting-room: could not open the meeting management page', failure)
+          }
+        }
+
+        /**
+         * Adopt the configured meeting directory as a Workspace and hand back its id.
+         *
+         * The directory itself is made by the host (DSH only adopts an existing directory), and
+         * an already-adopted path is reused instead of creating a second Workspace for it.
+         * @returns the Workspace id.
+         */
+        /** The Workspace id behind a snapshot row; older snapshots spelled it `id`. */
+        function workspaceIdOf(workspace) {
+          const id = workspace?.workspaceId ?? workspace?.id
+          return typeof id === 'string' ? id : ''
+        }
+
+        async function ensureMeetingWorkspace() {
+          // The route falls back to the saved setting, so the path never has to be read twice.
+          const prepared = await post('/meeting-dir/prepare', {})
+          const path = typeof prepared.path === 'string' ? prepared.path : ''
+          if (path === '') throw new Error(t('startNoWorkspacePath'))
+          const workspaces = ctx.get('workspaces')
+          const items = workspaces?.list?.getSnapshot?.()?.items ?? []
+          const existing = items.find((item) => typeof item?.path === 'string' && item.path === path)
+          if (existing !== undefined) {
+            const known = workspaceIdOf(existing)
+            if (known !== '') return known
+          }
+          if (typeof workspaces?.create !== 'function') throw new Error(t('startNoWorkspaceApi'))
+          const created = workspaceIdOf(await workspaces.create({ path }))
+          if (created === '') throw new Error(t('startNoWorkspaceApi'))
+          return created
+        }
+
+        /**
+         * Open a fresh conversation in a Workspace and let the panel start recording there.
+         *
+         * This is the guide card's hand-off, lifted into one function so the management page's
+         * 「开始会议」 button takes the identical path: a blank Session per meeting, the meeting
+         * tab retried until the column rebuilds, then the panel consumes `guideBegin`.
+         * @param workspaceId - Workspace to open the conversation in ('' inherits the current one).
+         */
+        function beginMeetingInWorkspace(workspaceId) {
+          // Already recording: the panel belongs to the running meeting, so just bring its tab
+          // forward instead of starting a second conversation.
+          if (recorder.active !== null) {
+            try {
+              ctx.sidebarRight.openTab(TAB_KIND)
+            } catch (failure) {
+              console.warn('meeting-room: the guide could not open the meeting tab', failure)
+            }
+            return
+          }
+          // A fresh conversation for every meeting: its transcript and the Agent's work stay in
+          // one session instead of mixing with whatever was open before.
+          guideBegin.pending = true
+          guideBegin.opened = false
+          // Without this window a request that never reached a session would fire later.
+          guideBegin.deadline = Date.now() + 15_000
+          void (async () => {
+            try {
+              if (typeof workspaceId === 'string' && workspaceId !== '') {
+                // The shell's own "new conversation in this workspace" path: it creates the
+                // blank Session, hands us its id, and reveals it in the main panel — the same
+                // call the sidebar's new-session button makes.
+                await ctx.uiWorkspace.openWorkspace(workspaceId, (created) => {
+                  guideBegin.target = typeof created === 'string' ? created : ''
+                })
+              } else {
+                ctx.uiWorkspace.startSession()
+              }
+            } catch (failure) {
+              console.warn('meeting-room: could not open a new conversation', failure)
+              guideBegin.pending = false
+              return
+            }
+            // The meeting tab belongs to a session, so it can only be opened after the switch.
+            // Retry briefly: the column rebuilds after the main surface changes.
+            for (const delay of [60, 250, 800, 1600, 3000]) {
+              window.setTimeout(() => {
+                if (guideBegin.pending !== true) return
+                try {
+                  ctx.sidebarRight.openTab(TAB_KIND)
+                } catch (failure) {
+                  console.warn('meeting-room: the guide could not open the meeting tab', failure)
+                }
+              }, delay)
+            }
+          })()
+        }
+
         function openMeetingFocus(focus = true) {
           // Opening expands the column and seeds its default width when it never had one. This
           // comes first and alone: when the column refuses the tab (no mounted conversation
@@ -8245,56 +8511,7 @@ function periodBucketOf(startedAt, unit) {
         // begins the meeting, so the click arms the panel and opens its tab.
         ctx.slots.inject('sidebar.right.tab.guide.entry', () => ctx.slots.register({
           name: 'sidebar.right.tab.guide.entry', key: TAB_ID, locale: NS,
-          inject: () => ({
-            begin: (workspaceId) => {
-              // Already recording: the panel belongs to the running meeting, so just bring
-              // its tab forward instead of starting a second conversation.
-              if (recorder.active !== null) {
-                try {
-                  ctx.sidebarRight.openTab(TAB_KIND)
-                } catch (failure) {
-                  console.warn('meeting-room: the guide could not open the meeting tab', failure)
-                }
-                return
-              }
-              // A fresh conversation for every meeting: its transcript and the Agent's work
-              // stay in one session instead of mixing with whatever was open before.
-              guideBegin.pending = true
-              guideBegin.opened = false
-              // Without this window a request that never reached a session would fire later.
-              guideBegin.deadline = Date.now() + 15_000
-              void (async () => {
-                try {
-                  if (typeof workspaceId === 'string' && workspaceId !== '') {
-                    // The shell's own "new conversation in this workspace" path: it creates
-                    // the blank Session, hands us its id, and reveals it in the main panel —
-                    // the same call the sidebar's new-session button makes.
-                    await ctx.uiWorkspace.openWorkspace(workspaceId, (created) => {
-                      guideBegin.target = typeof created === 'string' ? created : ''
-                    })
-                  } else {
-                    ctx.uiWorkspace.startSession()
-                  }
-                } catch (failure) {
-                  console.warn('meeting-room: the guide could not open a new conversation', failure)
-                  guideBegin.pending = false
-                  return
-                }
-                // The meeting tab belongs to a session, so it can only be opened after the
-                // switch. Retry briefly: the column rebuilds after the main surface changes.
-                for (const delay of [60, 250, 800, 1600, 3000]) {
-                  window.setTimeout(() => {
-                    if (guideBegin.pending !== true) return
-                    try {
-                      ctx.sidebarRight.openTab(TAB_KIND)
-                    } catch (failure) {
-                      console.warn('meeting-room: the guide could not open the meeting tab', failure)
-                    }
-                  }, delay)
-                }
-              })()
-            },
-          }),
+          inject: () => ({ begin: (workspaceId) => beginMeetingInWorkspace(workspaceId) }),
         }, GuideStartCard))
         ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
           name: 'conversation.session.header.actions',
@@ -8368,6 +8585,22 @@ function periodBucketOf(startedAt, unit) {
                 return false
               }
             },
+            /**
+             * Start a meeting in the configured directory: make the directory, adopt it as a
+             * Workspace, open a fresh conversation there and let the panel record.
+             * @returns '' when the meeting is on its way, otherwise the reason it is not.
+             */
+            startMeeting: async () => {
+              if (recorder.active !== null) return t('startAlreadyRecording')
+              try {
+                beginMeetingInWorkspace(await ensureMeetingWorkspace())
+                return ''
+              } catch (failure) {
+                return failure instanceof Error ? failure.message : String(failure)
+              }
+            },
+            /** The host's own directory chooser, used by the meeting-directory field. */
+            pickDirectory: () => ctx.uiWorkspace.pickDirectory(),
           }),
         }, MeetingHubPage))
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
