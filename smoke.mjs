@@ -623,6 +623,13 @@ check('红点可点击停止录音，且不触发所在按钮',
   && clientSource.includes('event.stopPropagation()'))
 check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
 // 点红点只是"想问一下"：确认弹窗、然后停止、然后去会议管理，三步一件不能少。
+// 标题栏那颗入口要跟壳子自己的标题栏动作（智能体团队、创造模式）一个长相：12px、tertiary 色、
+// 28px 高、3/7 padding——不是插件自己的 ghost 按钮。
+check('标题栏入口沿用壳子标题栏动作的字号与颜色',
+  clientSource.includes('.mr-header-entry { display: inline-flex')
+  && clientSource.includes('color: var(--dsw-alias-label-tertiary)')
+  && clientSource.includes('font-size: 12px; cursor: pointer;')
+  && clientSource.includes("className: 'mr-header-entry'"))
 check('会话标题栏的会议记录按钮只在已有会议或录音时出现',
   clientSource.includes('inject: (sessionId) => ({ sessionId')
   && clientSource.includes('/session?sessionId=')

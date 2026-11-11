@@ -1076,8 +1076,6 @@ registerProcessor('meeting-capture', MeetingCapture)
       subtitle: { margin: 0, fontSize: '12px', opacity: 0.7, lineHeight: 1.5 },
       row: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
       button: { padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
-      headerButton: { padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' },
-      headerButtonLabel: { display: 'inline-flex', alignItems: 'center', gap: '6px' },
       status: { fontSize: '12px', opacity: 0.8 },
       /**
        * The stop progress under the Start/Stop button. The corner toast keeps its own copy;
@@ -1435,6 +1433,13 @@ registerProcessor('meeting-capture', MeetingCapture)
   animation: mr-rec-breathe 1.6s ease-in-out infinite; }
 .mr-rec-hit { display: inline-flex; align-items: center; justify-content: center; width: 24px;
   height: 24px; flex: none; cursor: pointer; }
+/* The conversation-header entry borrows the shell's own header-action metrics (the 智能体团队
+   and 创造模式 entries): 12px label, tertiary colour, 28px tall, 3/7 padding, hover to primary.
+   Same numbers, so it reads as one of them instead of a plugin-shaped button. */
+.mr-header-entry { display: inline-flex; align-items: center; gap: 5px; min-height: 28px;
+  padding: 3px 7px; border: 0; border-radius: 6px; background: none;
+  color: var(--dsw-alias-label-tertiary); font-size: 12px; cursor: pointer; }
+.mr-header-entry:hover, .mr-header-entry:focus-visible { color: var(--dsw-alias-label-primary); }
 /* In the sidebar row the mark hangs at the row's right edge, after the label. The row is the
    shell's button; MeetingPanelIcon only lends it a positioning context for this. */
 .mr-rec-hit--row { position: absolute; right: 3px; top: 50%; margin-top: -12px; }
@@ -1458,7 +1463,6 @@ registerProcessor('meeting-capture', MeetingCapture)
       [styles.menuItem, 'menu'],
       [styles.tab, 'tab'],
       [styles.tabActive, 'tab-active'],
-      [styles.headerButton, 'header'],
     ])
     const FIELD_VARIANT = new Map([
       [styles.inlineInput, 'tight'],
@@ -1513,7 +1517,6 @@ registerProcessor('meeting-capture', MeetingCapture)
       menu: { variant: 'ghost', size: 'md' },
       tab: { variant: 'ghost', size: 'md' },
       'tab-active': { variant: 'ghost', size: 'md' },
-      header: { variant: 'ghost', size: 'md' },
       plain: { variant: 'ghost', size: 'md' },
     }
 
@@ -6024,20 +6027,17 @@ function periodBucketOf(startedAt, unit) {
       }, [props])
       // Nothing recorded and nothing written: this conversation has no meeting to open yet.
       if (recording !== true && hasRecord !== true) return null
-      return h(Btn, {
+      return h('button', {
         type: 'button',
-        style: styles.headerButton,
+        className: 'mr-header-entry',
         title: recording ? `${props.t('open')} · ${props.t('recording')}` : props.t('open'),
         onClick: () => props.open(),
-      }, h('span', { style: styles.headerButtonLabel }, [
-        h('span', { key: 'label' }, props.t('open')),
-        recording ? h(RecordingMark, {
-          key: 'dot',
-          className: 'mr-rec-hit',
-          title: props.t('stop'),
-          t: props.t,
-        }) : null,
-      ]))
+      }, props.t('open'), recording ? h(RecordingMark, {
+        key: 'dot',
+        className: 'mr-rec-hit',
+        title: props.t('stop'),
+        t: props.t,
+      }) : null)
     }
 
     /**
