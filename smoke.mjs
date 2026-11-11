@@ -324,6 +324,17 @@ await call('/webhooks', { templates: {} }, 'POST')
 // 会议目录：设置往返、默认值，以及"保存即采用这个目录"（DSH 只把已存在的目录接受为工作区，
 // 所以目录由宿主在保存时就建出来，坏路径当场报错，而不是拖到第一次开始会议）。
 check('会议目录未设置时回默认值', (await call('/webhooks')).value.meetingDir === '~/agents/meetings')
+// 会话标题栏那颗入口只在"这个会话已经有会议内容"或"正在录"时出现，所以宿主给一个轻量答案。
+const headerMeeting = await call('/ensure', { sessionId: 'session-header-entry' }, 'POST')
+const headerEmpty = await call(`/session?sessionId=session-header-entry`)
+check('新会话的会议没有内容，标题栏入口不显示', headerEmpty.status === 200
+  && headerEmpty.value.hasContent === false && headerEmpty.value.recording === false, JSON.stringify(headerEmpty.value))
+await call('/kind', { meetingId: headerMeeting.value.meetingId, title: '周例会' }, 'POST')
+const headerFilled = await call(`/session?sessionId=session-header-entry`)
+check('有了会议内容后标题栏入口出现', headerFilled.value.hasContent === true && headerFilled.value.recording === false)
+const headerUnknown = await call('/session?sessionId=nobody-here')
+check('不存在的会话回答"没有内容"而不是报错', headerUnknown.status === 200 && headerUnknown.value.hasContent === false)
+
 const badDir = await call('/webhooks', { meetingDir: 'relative/dir' }, 'POST')
 check('相对路径的会议目录被拒', badDir.status === 400 && String(badDir.value.error).includes('绝对路径'))
 const rootDir = await call('/webhooks', { meetingDir: '/' }, 'POST')
@@ -612,6 +623,10 @@ check('红点可点击停止录音，且不触发所在按钮',
   && clientSource.includes('event.stopPropagation()'))
 check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
 // 点红点只是"想问一下"：确认弹窗、然后停止、然后去会议管理，三步一件不能少。
+check('会话标题栏的会议记录按钮只在已有会议或录音时出现',
+  clientSource.includes('inject: (sessionId) => ({ sessionId')
+  && clientSource.includes('/session?sessionId=')
+  && clientSource.includes('if (recording !== true && hasRecord !== true) return null'))
 check('点红点先弹确认，确认后才停录并回到这场会议的会话',
   clientSource.includes('function StopConfirm')
   && clientSource.includes("t('stopMeetingTitle')")

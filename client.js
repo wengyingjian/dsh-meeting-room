@@ -5966,6 +5966,31 @@ function periodBucketOf(startedAt, unit) {
     function OpenMeetingButton(props) {
       // Same shared recorder as the sidebar glyph: the capture lives outside every panel.
       const recording = useRecorder().active !== null
+      /**
+       * Whether this conversation already holds something worth opening.
+       *
+       * The entry means "open the record this conversation already has", not "start a meeting
+       * here" — a fresh conversation therefore gets no button, and starting one goes through
+       * the management page's 开始会议 (or the agent). The host answers this from the same
+       * emptiness rule the history list uses.
+       */
+      const [hasRecord, setHasRecord] = React.useState(recording)
+      React.useEffect(() => {
+        const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+        if (sessionId === '') return undefined
+        let cancelled = false
+        const read = async () => {
+          try {
+            const value = await get(`/session?sessionId=${encodeURIComponent(sessionId)}`)
+            if (!cancelled) setHasRecord(value.hasContent === true || value.recording === true)
+          } catch {
+            // The host is restarting: keep the last answer instead of flickering away.
+          }
+        }
+        void read()
+        const timer = window.setInterval(() => { void read() }, 2500)
+        return () => { cancelled = true; window.clearInterval(timer) }
+      }, [props.sessionId])
       // The management page cannot open the right column: the shell refuses to address it
       // until a conversation surface is mounted, and that page is holding the main area. This
       // button sits in the conversation's own header, so it is mounted exactly when opening
@@ -6000,6 +6025,8 @@ function periodBucketOf(startedAt, unit) {
         }, 300)
         return () => clearInterval(timer)
       }, [props])
+      // Nothing recorded and nothing written: this conversation has no meeting to open yet.
+      if (recording !== true && hasRecord !== true) return null
       return h(Btn, {
         type: 'button',
         style: styles.headerButton,
@@ -8577,7 +8604,7 @@ function periodBucketOf(startedAt, unit) {
           id: 'meeting-room.open',
           order: 20,
           locale: NS,
-          inject: () => ({ open: () => toggleMeetingFocus(), openOnly: () => openMeetingFocus(false) }),
+          inject: (sessionId) => ({ sessionId, open: () => toggleMeetingFocus(), openOnly: () => openMeetingFocus(false) }),
         }, OpenMeetingButton))
 
         // The left-sidebar row and its main-panel page share one id: the row addresses the page.

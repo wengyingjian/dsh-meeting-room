@@ -779,6 +779,24 @@ export function createHandler(ctx) {
         return
       }
 
+      // Whether a conversation already holds something worth opening. The header entry shows
+      // itself from this, and only from this (plus "recording right now"), so a fresh
+      // conversation gets no meeting entry: the answer stays cheap instead of reading a whole
+      // record every few seconds.
+      if (method === 'GET' && route === '/session') {
+        const meeting = meetingForSession(url.searchParams.get('sessionId') ?? '', '')
+        if (meeting === undefined) {
+          sendJson(res, 200, { meetingId: '', hasContent: false, recording: false })
+          return
+        }
+        sendJson(res, 200, {
+          meetingId: meeting.id,
+          hasContent: !meetingIsEmpty(meeting),
+          recording: meeting.audioHandle !== undefined,
+        })
+        return
+      }
+
       if (method === 'POST' && route === '/flush') {
         // The picker's "auto-save": the periodic flush covers it within seconds, but the
         // panel must be able to say "saved" honestly before it switches away.
