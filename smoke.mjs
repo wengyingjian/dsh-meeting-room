@@ -560,6 +560,16 @@ check('客户端不再把探测失败当作就绪', !/catch\s*\{\s*return\s*\{\s
 check('客户端初始状态不谎报就绪', !/useState\(\{\s*ready:\s*true/u.test(clientSource))
 check('失败的路由请求带上 HTTP 状态（用来区分 404 与忙）', clientSource.includes('failure.status = response.status'))
 check('准备过程对终态与停滞都有出口（不会空等十分钟）', clientSource.includes('setupPrepareStalled') && clientSource.includes("s.phase === 'missing'"))
+// 左侧栏是「还在录音」唯一天天在视线里的位置：开始录音会把工作区栏收成图标 rail，面板自己
+// 又可以被关掉而采集照跑。所以这条指示读共享 recorder、画在注册的图标组件里面（壳子只渲染
+// 那个 glyph，给不出 badge），并在 release 时立刻清掉。
+check('侧边栏图标在录音中显示呼吸红点',
+  clientSource.includes('const recording = useRecorder().active !== null')
+  && clientSource.includes("className: 'mr-rec-dot'")
+  && clientSource.includes('.mr-rec-dot { position: absolute')
+  && clientSource.includes('@keyframes mr-rec-breathe')
+  && clientSource.includes('prefers-reduced-motion: reduce'))
+check('放下麦克风时红点立刻消失（active 清空即通知）', /recorder\.active = null\s+recorder\.emit\(\)/u.test(clientSource))
 // §5.1/§5.2/§5.5 的实际入口：这些名字或调用一旦被改掉，对应功能就会静默消失。
 check('面板标题行含名称、类型与系列导航', clientSource.includes('titlerow') && clientSource.includes('series.prev') && clientSource.includes("saveMeta({ kind"))
 check('四套一键提炼按钮都在', ['distillBriefing', 'distillReview', 'distillWeekly', 'distillMonthly'].every((key) => clientSource.includes(`${key}:`)))

@@ -1394,6 +1394,16 @@ registerProcessor('meeting-capture', MeetingCapture)
 .mr-ufield.mr-layout-title { flex: 1 1 auto; min-width: 0; }
 .mr-hover { transition: background .12s ease; }
 .mr-hover:hover { background: var(--dsw-alias-bg-layer-2); }
+/* The left-sidebar glyph's "still recording" mark: a breathing red dot. It has to live
+   inside the glyph, because the shell renders the registered component as the row's icon
+   and nothing else (see MeetingPanelIcon). */
+.mr-rec-dot { position: absolute; top: -1px; right: -1px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--dsw-alias-state-error-primary); pointer-events: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent);
+  animation: mr-rec-breathe 1.6s ease-in-out infinite; }
+@keyframes mr-rec-breathe { 0%, 100% { opacity: .35; transform: scale(.7); } 50% { opacity: 1; transform: scale(1); } }
+/* A dot that pulses forever is motion the person did not ask for. */
+@media (prefers-reduced-motion: reduce) { .mr-rec-dot { animation: none; opacity: 1; } }
 `
     if (typeof document !== 'undefined' && document.getElementById('mr-control-style') === null) {
       const sheet = document.createElement('style')
@@ -3867,7 +3877,11 @@ function periodBucketOf(startedAt, unit) {
       const release = React.useCallback(async () => {
         const active = recorder.active
         if (active === null) return
+        // The recording mark on the left-sidebar glyph reads `active`, so announce the
+        // release the moment the microphone is let go — not when the stop path finishes
+        // re-labelling minutes later.
         recorder.active = null
+        recorder.emit()
         try {
           clearInterval(active.ticker)
           active.node.port.onmessage = null
@@ -5829,12 +5843,21 @@ function periodBucketOf(startedAt, unit) {
     /**
      * Draw the left-sidebar row glyph. The row's registered component *is* the icon,
      * and the shell renders it as the row's direct icon child.
+     *
+     * A meeting that is recording marks this glyph with a breathing red dot. The capture
+     * outlives its panel, so the mark follows the shared recorder rather than a mounted
+     * view; and the sidebar is the one place still on screen after starting a meeting
+     * collapses the workspace rail, which is exactly when "still recording" has to be
+     * readable at a glance.
      * @param props - Owner-supplied glyph size.
      * @returns the icon element.
      */
     function MeetingPanelIcon(props) {
       const size = typeof props.size === 'number' ? props.size : 18
-      return h('svg', {
+      // `active` is the microphone's span: set when capture opens and cleared only by the
+      // stop path, so a paused meeting still reads as live (the mic is still held).
+      const recording = useRecorder().active !== null
+      const glyph = h('svg', {
         width: size,
         height: size,
         viewBox: '0 0 24 24',
@@ -5850,6 +5873,11 @@ function periodBucketOf(startedAt, unit) {
         h('path', { key: 'pole', d: 'M12 16v4' }),
         h('path', { key: 'lines', d: 'M8 10.5h2.5M13.5 8.5h2.5M8 13h8' }),
       ])
+      // The wrapper takes the owner's square so the dot can sit in its corner; the shell's
+      // glyph box is inline-flex and clips nothing, so nothing here changes the row's layout.
+      return h('span', {
+        style: { position: 'relative', width: size, height: size, display: 'inline-flex', flex: 'none' },
+      }, glyph, recording ? h('span', { className: 'mr-rec-dot' }) : null)
     }
 
     /** Recognizer geometry, measured against the official preprocessor (design §9.2.3). */
